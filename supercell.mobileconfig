@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>TLS</string>
+                <key>ServerAddresses</key>
+                <array>
+                    <string>45.139.239.54</string>
+                    <string>45.139.239.56</string>
+                    <string>185.175.46.137</string>
+                    <string>141.95.97.120</string>
+                    <string>185.211.245.131</string>
+                </array>
+                <key>ServerName</key>
+                <string>dns.nullsproxy.com</string>
+            </dict>
+            <key>PayloadDescription</key>
+            <string>Оптимизация DNS-маршрутизации для Brawl Stars и Clash Royale</string>
+            <key>PayloadDisplayName</key>
+            <string>NullsProxy Gaming DNS (Brawl Stars &amp; Clash Royale)</string>
+            <key>PayloadIdentifier</key>
+            <string>com.nullsproxy.dns.settings</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>A5E3F812-4B67-4C90-8D3E-9F1234567890</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Настройка DNS для стабильного подключения в играх Supercell (Brawl Stars, Clash Royale, Clash of Clans)</string>
+    <key>PayloadDisplayName</key>
+    <string>Supercell Gaming DNS Profile (Brawl Stars / Clash Royale)</string>
+    <key>PayloadIdentifier</key>
+    <string>com.nullsproxy.dns.profile</string>
+    <key>PayloadOrganization</key>
+    <string>NullsProxy</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>B7F4E923-5C78-4D01-9E4F-0123456789AB</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
