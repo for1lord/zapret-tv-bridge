@@ -102,6 +102,30 @@ DEFAULT_MOBILECONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
 </plist>'''
 
 
+def is_admin():
+    """Checks whether the process is running with Administrator privileges."""
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def ensure_admin():
+    """Reruns the current executable with Administrator privileges via UAC if not already elevated."""
+    if not is_admin():
+        try:
+            import ctypes
+            params = " ".join([f'"{a}"' for a in sys.argv[1:]])
+            target = sys.executable if getattr(sys, "frozen", False) else sys.executable
+            args = params if getattr(sys, "frozen", False) else f'"{os.path.abspath(__file__)}" {params}'
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", target, args, None, 1)
+            if ret > 32:
+                sys.exit(0)
+        except Exception as e:
+            print(f"[!] Ошибка повышения привилегий UAC: {e}")
+
+
 def is_pid_alive(pid):
     """Accurately checks whether a process PID is currently running on Windows."""
     if not pid or pid <= 0:
@@ -1706,6 +1730,11 @@ def cmd_fix_proxy():
 
 def cmd_remove_strategy():
     """Stops and deletes Zapret Windows service and WinDivert drivers."""
+    if not is_admin():
+        ensure_admin()
+        if not is_admin():
+            print("\n[!] ОШИБКА: Для удаления службы Windows требуются права Администратора.")
+            return False
     print("\n[*] Остановка и удаление службы Zapret...")
     subprocess.run(["sc", "stop", "zapret"], capture_output=True)
     subprocess.run(["sc", "delete", "zapret"], capture_output=True)
@@ -1723,6 +1752,13 @@ def cmd_remove_strategy():
 
 def cmd_install_strategy(base_dir, chosen_strategy=None):
     """Interactively or directly installs Zapret Windows service with chosen strategy."""
+    if not is_admin():
+        ensure_admin()
+        if not is_admin():
+            print("\n[!] ОШИБКА: Для установки системной службы требуются права Администратора.")
+            print("    Запустите программу от имени Администратора (ПКМ -> Запуск от имени администратора).")
+            return False
+
     strategies = discover_zapret_strategies(base_dir)
     if not strategies:
         print("\n[!] Стратегии Zapret не найдены. Убедитесь, что папка 'presets' существует.")
@@ -1771,6 +1807,7 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
 
     winws_candidates = [
         os.path.join(base_dir, "bin", "winws.exe"),
+        os.path.join(base_dir, "winws.exe"),
         r"D:\WINDOWS\zapret-discord-youtube-1.10.4\bin\winws.exe",
         r"C:\Users\lanze\Documents\antigravity\blissful-shannon\bin\winws.exe",
     ]
@@ -1799,12 +1836,16 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
     subprocess.run(["sc", "delete", "zapret"], capture_output=True)
     subprocess.run(["taskkill", "/IM", "winws.exe", "/F"], capture_output=True)
 
-    subprocess.run([
+    res = subprocess.run([
         "sc", "create", "zapret",
         f"binPath= \"{winws_exe}\"",
         "DisplayName=", "zapret",
         "start=", "auto"
-    ], capture_output=True)
+    ], capture_output=True, text=True)
+
+    if res.returncode != 0:
+        print(f"[!] Ошибка создания службы: {res.stdout.strip() or res.stderr.strip()}")
+        return False
 
     subprocess.run(["sc", "description", "zapret", "Zapret DPI bypass software"], capture_output=True)
 
@@ -1816,8 +1857,17 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         winreg.CloseKey(key)
     except Exception as e:
         print(f"[!] Ошибка записи реестра: {e}")
+        return False
 
     start_res = subprocess.run(["sc", "start", "zapret"], capture_output=True, text=True)
+    if "START_PENDING" in start_res.stdout or "RUNNING" in start_res.stdout:
+        print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно установлена и запущена!")
+    else:
+        q_res = subprocess.run(["sc", "query", "zapret"], capture_output=True, text=True)
+        if "RUNNING" in q_res.stdout:
+            print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно запущена!")
+        else:
+            print(f"[!] Служба создана, но запуск вернул: {start_res.stdout.strip() or start_res.stderr.strip()}")
     if "START_PENDING" in start_res.stdout or "RUNNING" in start_res.stdout:
         print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно установлена и запущена!")
     else:
@@ -2126,6 +2176,7 @@ def main():
 
     # Handle standalone CLI commands
     if args.menu:
+        ensure_admin()
         cmd_menu(base_dir)
         sys.exit(0)
     if args.status:
@@ -2141,6 +2192,7 @@ def main():
         cmd_restart(base_dir)
         sys.exit(0)
     if args.firewall:
+        ensure_admin()
         cmd_firewall()
         sys.exit(0)
     if args.startup_enable:
@@ -2156,10 +2208,12 @@ def main():
         cmd_test()
         sys.exit(0)
     if args.install_strategy:
+        ensure_admin()
         strat = None if args.install_strategy == "interactive" else args.install_strategy
         cmd_install_strategy(base_dir, strat)
         sys.exit(0)
     if args.remove_service:
+        ensure_admin()
         cmd_remove_strategy()
         sys.exit(0)
     if args.fix_proxy:
@@ -2168,6 +2222,7 @@ def main():
 
     # If run with no arguments in an interactive console, default to the menu
     if len(sys.argv) == 1 and sys.stdin and sys.stdin.isatty():
+        ensure_admin()
         cmd_menu(base_dir)
         sys.exit(0)
 
