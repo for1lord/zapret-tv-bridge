@@ -46,6 +46,8 @@ if exist "%BRIDGE_EXE%" (
 set "CLI_CMD=%~1"
 if /i "%CLI_CMD%"=="admin" set "CLI_CMD=%~2"
 
+if /i "%CLI_CMD%"=="install" goto :opt_install_zapret
+if /i "%CLI_CMD%"=="remove" goto :opt_remove_zapret
 if /i "%CLI_CMD%"=="start" (
     call :refresh_status
     goto :opt_start
@@ -61,6 +63,7 @@ if /i "%CLI_CMD%"=="restart" (
 if /i "%CLI_CMD%"=="status" (
     goto :opt_status
 )
+if /i "%CLI_CMD%"=="fix-proxy" goto :opt_fix_proxy
 if /i "%CLI_CMD%"=="firewall" goto :opt_firewall
 if /i "%CLI_CMD%"=="test" goto :opt_test
 
@@ -72,34 +75,37 @@ echo.
 echo   ==================================================
 echo   ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.01
 echo   ==================================================
+echo   Zapret Service: !ZAPRET_STATUS_STR!
 if "!IS_RUNNING!"=="1" (
-    echo   Status:    !STATUS_STR!
-    echo   Address:   http://!HOST_PORT!/
-    echo   PAC URL:   http://!HOST_PORT!/proxy.pac
-    echo   Smart TV:  IP !LOCAL_IP!  Port !LOCAL_PORT!
+    echo   Bridge Status:  !STATUS_STR!
+    echo   Address:        http://!HOST_PORT!/
+    echo   PAC URL:        http://!HOST_PORT!/proxy.pac
+    echo   Smart TV:       IP !LOCAL_IP!  Port !LOCAL_PORT!
 ) else (
-    echo   Status:    !STATUS_STR!
-    echo   Address:   Не активен
+    echo   Bridge Status:  !STATUS_STR!
+    echo   Address:        Не активен
 )
-echo   Directory: %PROJECT_DIR%
+echo   Directory:      %PROJECT_DIR%
 echo   --------------------------------------------------
 echo.
 echo   :: SERVICE
-echo      1. Install Service / Firewall Rules
-echo      2. Start Bridge (Background)
-echo      3. Stop Bridge
-echo      4. Restart Bridge
-echo      5. Check Status ^& Connection URLs
+echo      1. Install Zapret Service (Choose Strategy)
+echo      2. Remove Zapret Service (Stop ^& Delete)
+echo      3. Start Bridge (Background)
+echo      4. Stop Bridge
+echo      5. Restart Bridge
+echo      6. Check Status ^& Connection URLs
 echo.
 echo   :: SETTINGS ^& AUTORUN
-echo      6. Windows Startup              !STARTUP_STATUS!
-echo      7. Generate New Telegram MTProto Key
-echo      8. Open Domain Routing Lists Folder
+echo      7. Windows Startup              !STARTUP_STATUS!
+echo      8. Fix Windows Proxy (Protect Antigravity / AG Configurator)
+echo      9. Generate New Telegram MTProto Key
+echo      10. Open Domain Routing Lists Folder
 echo.
 echo   :: TOOLS ^& LOGS
-echo      9. Open Web Dashboard in Browser
-echo      10. View Live Logs (tv_proxy.log)
-echo      11. Run Diagnostics ^& DoH Latency Test
+echo      11. Open Web Dashboard in Browser
+echo      12. View Live Logs (tv_proxy.log)
+echo      13. Run Diagnostics ^& DoH Latency Test
 echo.
 echo   --------------------------------------------------
 echo      0. Exit
@@ -107,20 +113,22 @@ echo   --------------------------------------------------
 echo.
 
 set "CHOICE="
-set /p CHOICE="   Select option (0-11): "
+set /p CHOICE="   Select option (0-13): "
 
 if not defined CHOICE goto :menu_loop
-if "%CHOICE%"=="1" goto :opt_firewall
-if "%CHOICE%"=="2" goto :opt_start
-if "%CHOICE%"=="3" goto :opt_stop
-if "%CHOICE%"=="4" goto :opt_restart
-if "%CHOICE%"=="5" goto :opt_status
-if "%CHOICE%"=="6" goto :opt_startup
-if "%CHOICE%"=="7" goto :opt_tg_secret
-if "%CHOICE%"=="8" goto :opt_lists
-if "%CHOICE%"=="9" goto :opt_dashboard
-if "%CHOICE%"=="10" goto :opt_logs
-if "%CHOICE%"=="11" goto :opt_test
+if "%CHOICE%"=="1" goto :opt_install_zapret
+if "%CHOICE%"=="2" goto :opt_remove_zapret
+if "%CHOICE%"=="3" goto :opt_start
+if "%CHOICE%"=="4" goto :opt_stop
+if "%CHOICE%"=="5" goto :opt_restart
+if "%CHOICE%"=="6" goto :opt_status
+if "%CHOICE%"=="7" goto :opt_startup
+if "%CHOICE%"=="8" goto :opt_fix_proxy
+if "%CHOICE%"=="9" goto :opt_tg_secret
+if "%CHOICE%"=="10" goto :opt_lists
+if "%CHOICE%"=="11" goto :opt_dashboard
+if "%CHOICE%"=="12" goto :opt_logs
+if "%CHOICE%"=="13" goto :opt_test
 if "%CHOICE%"=="0" exit /b
 goto :menu_loop
 
@@ -142,6 +150,29 @@ if exist "%PID_FILE%" (
     )
 )
 
+set "ZAPRET_RUNNING=0"
+set "ZAPRET_STRATEGY="
+sc query zapret 2>nul | findstr /i "STATE" | findstr /i "RUNNING" >nul
+if not errorlevel 1 (
+    set "ZAPRET_RUNNING=1"
+    for /f "tokens=2*" %%A in ('reg query "HKLM\System\CurrentControlSet\Services\zapret" /v zapret-discord-youtube 2^>nul') do set "ZAPRET_STRATEGY=%%B"
+)
+
+if "!ZAPRET_RUNNING!"=="1" (
+    if defined ZAPRET_STRATEGY (
+        set "ZAPRET_STATUS_STR=[RUNNING - !ZAPRET_STRATEGY!]"
+    ) else (
+        set "ZAPRET_STATUS_STR=[RUNNING]"
+    )
+) else (
+    sc query zapret 2>nul | findstr /i "zapret" >nul
+    if not errorlevel 1 (
+        set "ZAPRET_STATUS_STR=[STOPPED]"
+    ) else (
+        set "ZAPRET_STATUS_STR=[NOT INSTALLED]"
+    )
+)
+
 set "HOST_PORT=127.0.0.1:8080"
 if exist "%IP_FILE%" (
     for /f "usebackq delims=" %%i in ("%IP_FILE%") do set "HOST_PORT=%%i"
@@ -156,14 +187,14 @@ if exist "%SHORTCUT_PATH%" set "STARTUP_STATUS=[enabled]"
 exit /b
 
 :: -----------------------------------------------------------------------------
-:: 1. FIREWALL
+:: 1. INSTALL ZAPRET SERVICE (CHOOSE STRATEGY)
 :: -----------------------------------------------------------------------------
-:opt_firewall
+:opt_install_zapret
 cls
 if "!USE_STANDALONE!"=="1" (
-    "%BRIDGE_EXE%" --firewall
+    "%BRIDGE_EXE%" --install-strategy
 ) else (
-    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --firewall
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --install-strategy
 )
 if defined CLI_CMD exit /b
 echo.
@@ -171,7 +202,22 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 2. START
+:: 2. REMOVE ZAPRET SERVICE
+:: -----------------------------------------------------------------------------
+:opt_remove_zapret
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --remove-service
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --remove-service
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 3. START BRIDGE
 :: -----------------------------------------------------------------------------
 :opt_start
 cls
@@ -195,7 +241,7 @@ if defined CLI_CMD exit /b
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 3. STOP
+:: 4. STOP BRIDGE
 :: -----------------------------------------------------------------------------
 :opt_stop
 cls
@@ -212,7 +258,7 @@ if defined CLI_CMD exit /b
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 4. RESTART
+:: 5. RESTART BRIDGE
 :: -----------------------------------------------------------------------------
 :opt_restart
 cls
@@ -233,7 +279,7 @@ if defined CLI_CMD exit /b
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 5. STATUS
+:: 6. STATUS
 :: -----------------------------------------------------------------------------
 :opt_status
 cls
@@ -247,7 +293,7 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 6. STARTUP TOGGLE
+:: 7. STARTUP TOGGLE
 :: -----------------------------------------------------------------------------
 :opt_startup
 cls
@@ -283,7 +329,22 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 7. TG SECRET
+:: 8. FIX WINDOWS PROXY (PROTECT ANTIGRAVITY / AG CONFIGURATOR)
+:: -----------------------------------------------------------------------------
+:opt_fix_proxy
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --fix-proxy
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --fix-proxy
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 9. TG SECRET
 :: -----------------------------------------------------------------------------
 :opt_tg_secret
 cls
@@ -297,7 +358,7 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 8. DOMAIN LISTS
+:: 10. DOMAIN LISTS
 :: -----------------------------------------------------------------------------
 :opt_lists
 cls
@@ -308,14 +369,14 @@ timeout /t 1 >nul
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 9. DASHBOARD
+:: 11. DASHBOARD
 :: -----------------------------------------------------------------------------
 :opt_dashboard
 start http://!HOST_PORT!/
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 10. LIVE LOGS
+:: 12. LIVE LOGS
 :: -----------------------------------------------------------------------------
 :opt_logs
 cls
@@ -334,7 +395,7 @@ if exist "%LOG_FILE%" (
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 11. DIAGNOSTICS & TESTS
+:: 13. DIAGNOSTICS & TESTS
 :: -----------------------------------------------------------------------------
 :opt_test
 cls
@@ -342,6 +403,20 @@ if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --test
 ) else (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --test
+)
+if defined CLI_CMD exit /b
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: FIREWALL DIRECT CLI
+:: -----------------------------------------------------------------------------
+:opt_firewall
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --firewall
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --firewall
 )
 if defined CLI_CMD exit /b
 pause

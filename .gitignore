@@ -7,6 +7,7 @@ __pycache__/
 *.pid
 *.ip
 *.log
+*.backup*
 tv_proxy.pid
 tv_proxy.ip
 tv_proxy.log

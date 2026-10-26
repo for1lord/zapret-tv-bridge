@@ -12,13 +12,16 @@ Zapret TV & Mobile Bridge — это готовое коробочное реш�
 ```text
 D:\projects\zapret-tv-bridge\
 ├── service.bat               # ЕДИНСТВЕННЫЙ файл в корне для настройки и управления (TUI в стиле Zapret)
-├── bin\                      # Автономные бинарные файлы (Zero-Python standalone runtime)
-│   └── ZapretTVBridge.exe    # Скомпилированное ядро моста со встроенным рантаймом и зависимостями
+├── bin\                      # Автономные бинарные файлы (Zero-Python standalone runtime, winws, windivert)
+│   ├── ZapretTVBridge.exe    # Скомпилированное ядро моста со встроенным рантаймом и зависимостями
+│   ├── winws.exe             # Исполняемый файл службы Zapret
+│   └── WinDivert64.sys       # Драйвер перехвата пакетов
+├── presets\                  # Готовые стратегии запуска Zapret (22 пресета general)
 ├── lists\                    # Списки доменов маршрутизации
 │   ├── list-general.txt      # Домены для маршрутизации через Zapret (рандомизированы, дедуплицированы)
 │   ├── list-general-user.txt # Пользовательские домены
 │   ├── list-exclude.txt      # Домены прямого подключения (DIRECT: Яндекс, Сбер, Госуслуги, VK)
-│   └── list-exclude-user.txt # Исключения пользователя (включая CloudCode / Google API)
+│   └── list-exclude-user.txt # Исключения пользователя (включая CloudCode / Google API / Antigravity)
 ├── supercell.mobileconfig    # DoT DNS-профиль для iOS (игры Brawl Stars и Clash Royale)
 ├── zapret_tv_bridge.py       # Исходный код ядра моста (HTTP CONNECT, DoH, PAC, In-Process TG)
 ├── tg_ws_proxy\              # Модуль Flowseal/tg-ws-proxy (Telegram MTProto WebSocket bridge, порт 1443)

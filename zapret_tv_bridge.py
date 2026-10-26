@@ -253,6 +253,14 @@ class SmartRoutingFilter:
                     shutil.copy2(meipass_bat, local_bat)
                 except Exception:
                     pass
+            meipass_presets = os.path.join(sys._MEIPASS, "presets")
+            local_presets = os.path.join(base_dir, "presets")
+            if os.path.exists(meipass_presets) and not os.path.exists(local_presets):
+                import shutil
+                try:
+                    shutil.copytree(meipass_presets, local_presets)
+                except Exception:
+                    pass
 
         candidates = [
             local_lists,
@@ -379,6 +387,23 @@ class SmartRoutingFilter:
                 sub = ".".join(parts[i:])
                 if sub in self.exclude_domains:
                     return False, "excluded_direct"
+
+        # Antigravity IDE & AI Developer Tools (AGUnlocker / AG_2.26.0) -> ALWAYS DIRECT
+        if any(h in host for h in [
+            "cloudcode-pa.googleapis.com",
+            "daily-cloudcode-pa.googleapis.com",
+            "googleapis.com",
+            "google.com",
+            "gstatic.com",
+            "gvt1.com",
+            "geohide.ru",
+            "dns-ai.ru",
+            "chatgpt.com",
+            "openai.com",
+            "anthropic.com",
+            "claude.ai",
+        ]):
+            return False, "ai_antigravity_direct"
 
         # Apple core services -> DIRECT
         if any(h in host for h in ["apple.com", "mzstatic.com", "icloud.com", "itunes.com", "aaplimg.com", "akadns.net"]):
@@ -698,6 +723,21 @@ class ZapretTVBridge:
         return proxy;
     }}
 
+    // Antigravity IDE & AI Developer Tools (AGUnlocker) -> ALWAYS DIRECT
+    if (shExpMatch(hostLower, "*cloudcode-pa.googleapis.com*") ||
+        shExpMatch(hostLower, "*googleapis.com*") ||
+        shExpMatch(hostLower, "*google.com*") ||
+        shExpMatch(hostLower, "*gstatic.com*") ||
+        shExpMatch(hostLower, "*gvt1.com*") ||
+        shExpMatch(hostLower, "*chatgpt.com*") ||
+        shExpMatch(hostLower, "*openai.com*") ||
+        shExpMatch(hostLower, "*anthropic.com*") ||
+        shExpMatch(hostLower, "*claude.ai*") ||
+        shExpMatch(hostLower, "*geohide.ru*") ||
+        shExpMatch(hostLower, "*dns-ai.ru*")) {{
+        return "DIRECT";
+    }}
+
     // Apple core services -> DIRECT
     if (shExpMatch(hostLower, "*apple.com*") ||
         shExpMatch(hostLower, "*itunes.com*") ||
@@ -737,7 +777,16 @@ class ZapretTVBridge:
         return "DIRECT";
     }}
 
-    return proxy;
+    // Media Trackers & Portals
+    if (shExpMatch(hostLower, "*rutracker*") ||
+        shExpMatch(hostLower, "*rutor*") ||
+        shExpMatch(hostLower, "*nnmclub*") ||
+        shExpMatch(hostLower, "*flibusta*")) {{
+        return proxy;
+    }}
+
+    // All other traffic -> DIRECT
+    return "DIRECT";
 }}
 """
         return pac_body
@@ -1453,23 +1502,248 @@ def cmd_status(base_dir):
     startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
     startup_enabled = os.path.exists(startup_shortcut)
 
+    zapret_running, zapret_strat = get_zapret_service_status()
+
     print()
     print("  ==================================================")
     print("  ZAPRET TV & MOBILE BRIDGE -- СТАТУС СЕРВИСА")
     print("  ==================================================")
+    if zapret_running:
+        strat_str = f" [{zapret_strat}]" if zapret_strat else ""
+        print(f"  Служба Zapret:АКТИВНА{strat_str}")
+    else:
+        print("  Служба Zapret:ОСТАНОВЛЕНА / НЕ УСТАНОВЛЕНА")
+
     if is_running:
-        print(f"  Статус:       АКТИВЕН [PID: {current_pid}]")
+        print(f"  Мост (Bridge): АКТИВЕН [PID: {current_pid}]")
         print(f"  Адрес:        http://{host_port}/")
         print(f"  PAC URL:      http://{host_port}/proxy.pac")
         print(f"  Smart TV:     IP {local_ip}  Порт {local_port}")
         if tg_secret:
             print(f"  Telegram:     tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
     else:
-        print("  Статус:       ОСТАНОВЛЕН (Фоновый процесс не запущен)")
+        print("  Мост (Bridge): ОСТАНОВЛЕН (Фоновый процесс не запущен)")
         print(f"  Локальный IP: {local_ip}")
     print(f"  Автозагрузка: {'[Включена]' if startup_enabled else '[Отключена]'}")
     print("  --------------------------------------------------")
     print()
+
+
+def get_zapret_service_status():
+    """Checks whether the zapret Windows service is currently running."""
+    is_running = False
+    strategy = ""
+    try:
+        import winreg
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_READ)
+            strategy, _ = winreg.QueryValueEx(key, "zapret-discord-youtube")
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+
+        res = subprocess.run(["sc", "query", "zapret"], capture_output=True, text=True)
+        if "STATE" in res.stdout and "RUNNING" in res.stdout:
+            is_running = True
+    except Exception:
+        pass
+    return is_running, strategy
+
+
+def discover_zapret_strategies(base_dir):
+    """Discovers available Zapret strategy presets."""
+    import glob
+    search_dirs = [
+        os.path.join(base_dir, "presets"),
+        base_dir,
+        r"D:\WINDOWS\zapret-discord-youtube-1.10.4",
+        r"C:\Users\lanze\Documents\antigravity\blissful-shannon"
+    ]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        search_dirs.insert(0, os.path.join(sys._MEIPASS, "presets"))
+
+    for d in search_dirs:
+        if os.path.exists(d):
+            bats = glob.glob(os.path.join(d, "*.bat"))
+            candidates = [b for b in bats if not os.path.basename(b).lower().startswith("service")]
+            if candidates:
+                def sort_key(p):
+                    parts = re.split(r'(\d+)', os.path.basename(p))
+                    return [int(x) if x.isdigit() else x.lower() for x in parts]
+                candidates.sort(key=sort_key)
+                return [(os.path.splitext(os.path.basename(b))[0], b) for b in candidates]
+    return []
+
+
+def parse_strategy_args(bat_path, bin_dir, lists_dir):
+    """Parses winws.exe arguments from a strategy .bat file with path normalization."""
+    with open(bat_path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    if not bin_dir.endswith("\\"):
+        bin_dir += "\\"
+    if not lists_dir.endswith("\\"):
+        lists_dir += "\\"
+
+    content = content.replace("%GameFilterTCP%", "12").replace("%GameFilterUDP%", "12")
+    content = content.replace("%GameFilter%", "12")
+    content = content.replace("%BIN%", bin_dir)
+    content = content.replace("%LISTS%", lists_dir)
+
+    lines = content.splitlines()
+    winws_lines = []
+    capture = False
+    for line in lines:
+        stripped = line.strip()
+        if "winws.exe" in stripped:
+            capture = True
+        if capture:
+            winws_lines.append(stripped)
+            if not stripped.endswith("^"):
+                break
+
+    full_cmd = " ".join(winws_lines).replace("^", " ")
+    m = re.search(r'winws\.exe[\"\']?\s+(.*)', full_cmd, re.IGNORECASE)
+    if not m:
+        return None
+    raw_args = re.sub(r'\s+', ' ', m.group(1).strip())
+    return raw_args
+
+
+def cmd_fix_proxy():
+    """Ensures Windows System Proxy is cleared to protect Antigravity IDE and AG Configurator."""
+    try:
+        subprocess.run(["reg", "delete", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                        "/v", "AutoConfigURL", "/f"], capture_output=True)
+        subprocess.run(["reg", "add", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                        "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"], capture_output=True)
+        print("[+] Системный прокси Windows очищен (прямое подключение). Antigravity IDE и AG Configurator защищены!")
+    except Exception as e:
+        print(f"[!] Ошибка очистки системного прокси: {e}")
+
+
+def cmd_remove_strategy():
+    """Stops and deletes Zapret Windows service and WinDivert drivers."""
+    print("\n[*] Остановка и удаление службы Zapret...")
+    subprocess.run(["sc", "stop", "zapret"], capture_output=True)
+    subprocess.run(["sc", "delete", "zapret"], capture_output=True)
+    subprocess.run(["taskkill", "/IM", "winws.exe", "/F"], capture_output=True)
+    subprocess.run(["sc", "stop", "WinDivert"], capture_output=True)
+    subprocess.run(["sc", "delete", "WinDivert"], capture_output=True)
+    subprocess.run(["sc", "stop", "WinDivert14"], capture_output=True)
+    subprocess.run(["sc", "delete", "WinDivert14"], capture_output=True)
+    try:
+        subprocess.run(["reg", "delete", r"HKLM\System\CurrentControlSet\Services\zapret", "/f"], capture_output=True)
+    except Exception:
+        pass
+    print("[+] Служба Zapret и драйвер WinDivert успешно остановлены и удалены из системы!")
+
+
+def cmd_install_strategy(base_dir, chosen_strategy=None):
+    """Interactively or directly installs Zapret Windows service with chosen strategy."""
+    strategies = discover_zapret_strategies(base_dir)
+    if not strategies:
+        print("\n[!] Стратегии Zapret не найдены. Убедитесь, что папка 'presets' существует.")
+        return False
+
+    selected_bat = None
+    strategy_name = ""
+
+    if chosen_strategy is not None:
+        if str(chosen_strategy).isdigit():
+            idx = int(chosen_strategy) - 1
+            if 0 <= idx < len(strategies):
+                strategy_name, selected_bat = strategies[idx]
+        else:
+            for s_name, s_path in strategies:
+                if s_name.lower() == str(chosen_strategy).lower() or os.path.basename(s_path).lower() == str(chosen_strategy).lower():
+                    strategy_name, selected_bat = s_name, s_path
+                    break
+
+    if not selected_bat:
+        print("\n  ==================================================")
+        print("  ВЫБОР СТРАТЕГИИ ZAPRET ДЛЯ УСТАНОВКИ СЛУЖБЫ")
+        print("  ==================================================")
+        for i, (name, path) in enumerate(strategies, 1):
+            print(f"     {i:2d}. {name}")
+        print("  --------------------------------------------------")
+        print("      0. Отмена")
+        print()
+        try:
+            choice = input(f"  Выберите стратегию (1-{len(strategies)}, 0 для отмены): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            return False
+
+        if choice == "0" or not choice:
+            return False
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(strategies):
+                strategy_name, selected_bat = strategies[idx]
+            else:
+                print("[!] Неверный номер стратегии.")
+                return False
+        else:
+            print("[!] Неверный ввод.")
+            return False
+
+    winws_candidates = [
+        os.path.join(base_dir, "bin", "winws.exe"),
+        r"D:\WINDOWS\zapret-discord-youtube-1.10.4\bin\winws.exe",
+        r"C:\Users\lanze\Documents\antigravity\blissful-shannon\bin\winws.exe",
+    ]
+    winws_exe = None
+    for c in winws_candidates:
+        if os.path.exists(c):
+            winws_exe = c
+            break
+
+    if not winws_exe:
+        print("[!] winws.exe не найден в bin. Установка невозможна.")
+        return False
+
+    winws_dir = os.path.dirname(winws_exe)
+    lists_dir = os.path.join(base_dir, "lists")
+    if not os.path.exists(lists_dir):
+        lists_dir = r"D:\WINDOWS\zapret-discord-youtube-1.10.4\lists"
+
+    print(f"\n[*] Применение стратегии: {strategy_name}")
+    parsed_args = parse_strategy_args(selected_bat, winws_dir, lists_dir)
+    if not parsed_args:
+        print("[!] Не удалось разобрать параметры запуска из выбранного файла стратегии.")
+        return False
+
+    subprocess.run(["sc", "stop", "zapret"], capture_output=True)
+    subprocess.run(["sc", "delete", "zapret"], capture_output=True)
+    subprocess.run(["taskkill", "/IM", "winws.exe", "/F"], capture_output=True)
+
+    subprocess.run([
+        "sc", "create", "zapret",
+        f"binPath= \"{winws_exe}\"",
+        "DisplayName=", "zapret",
+        "start=", "auto"
+    ], capture_output=True)
+
+    subprocess.run(["sc", "description", "zapret", "Zapret DPI bypass software"], capture_output=True)
+
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "ImagePath", 0, winreg.REG_EXPAND_SZ, f'"{winws_exe}" {parsed_args}')
+        winreg.SetValueEx(key, "zapret-discord-youtube", 0, winreg.REG_SZ, strategy_name)
+        winreg.CloseKey(key)
+    except Exception as e:
+        print(f"[!] Ошибка записи реестра: {e}")
+
+    start_res = subprocess.run(["sc", "start", "zapret"], capture_output=True, text=True)
+    if "START_PENDING" in start_res.stdout or "RUNNING" in start_res.stdout:
+        print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно установлена и запущена!")
+    else:
+        print(f"[+] Служба создана. Запуск: {start_res.stdout.strip() or 'OK'}")
+
+    cmd_firewall()
+    cmd_fix_proxy()
+    return True
 
 
 def cmd_firewall():
@@ -1636,39 +1910,48 @@ def cmd_menu(base_dir):
 
         startup_status = "[enabled]" if os.path.exists(startup_shortcut) else "[disabled]"
 
+        zapret_running, zapret_strat = get_zapret_service_status()
+        if zapret_running:
+            zapret_label = f"[RUNNING - {zapret_strat}]" if zapret_strat else "[RUNNING]"
+        else:
+            zapret_label = "[STOPPED]"
+
         print()
         print("  ==================================================")
         print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.01")
         print("  ==================================================")
+        print(f"  Zapret Service: {zapret_label}")
         if is_running:
-            print(f"  Status:    [RUNNING] (PID: {current_pid})")
-            print(f"  Address:   http://{host_port}/")
-            print(f"  PAC URL:   http://{host_port}/proxy.pac")
-            print(f"  Smart TV:  IP {local_ip}  Port {local_port}")
+            print(f"  Bridge Status:  [RUNNING - PID: {current_pid}]")
+            print(f"  Address:        http://{host_port}/")
+            print(f"  PAC URL:        http://{host_port}/proxy.pac")
+            print(f"  Smart TV:       IP {local_ip}  Port {local_port}")
             if tg_secret:
-                print(f"  Telegram:  tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
+                print(f"  Telegram:       tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
         else:
-            print("  Status:    [STOPPED]")
-            print("  Address:   Не активен")
-        print(f"  Directory: {base_dir}")
+            print("  Bridge Status:  [STOPPED]")
+            print("  Address:        Не активен")
+        print(f"  Directory:      {base_dir}")
         print("  --------------------------------------------------")
         print()
         print("  :: SERVICE")
-        print("     1. Install Service / Firewall Rules")
-        print("     2. Start Bridge (Background)")
-        print("     3. Stop Bridge")
-        print("     4. Restart Bridge")
-        print("     5. Check Status & Connection URLs")
+        print("     1. Install Zapret Service (Choose Strategy)")
+        print("     2. Remove Zapret Service (Stop & Delete)")
+        print("     3. Start Bridge (Background)")
+        print("     4. Stop Bridge")
+        print("     5. Restart Bridge")
+        print("     6. Check Status & Connection URLs")
         print()
         print("  :: SETTINGS & AUTORUN")
-        print(f"     6. Windows Startup              {startup_status}")
-        print("     7. Generate New Telegram MTProto Key")
-        print("     8. Open Domain Lists Folder")
+        print(f"     7. Windows Startup              {startup_status}")
+        print("     8. Fix Windows Proxy (Protect Antigravity / AG Configurator)")
+        print("     9. Generate New Telegram MTProto Key")
+        print("     10. Open Domain Lists Folder")
         print()
         print("  :: TOOLS & LOGS")
-        print("     9. Open Web Dashboard in Browser")
-        print("     10. View Live Logs (tv_proxy.log)")
-        print("     11. Run Diagnostics & DoH Latency Test")
+        print("     11. Open Web Dashboard in Browser")
+        print("     12. View Live Logs (tv_proxy.log)")
+        print("     13. Run Diagnostics & DoH Latency Test")
         print()
         print("  --------------------------------------------------")
         print("     0. Exit")
@@ -1676,16 +1959,19 @@ def cmd_menu(base_dir):
         print()
 
         try:
-            choice = input("   Select option (0-11): ").strip()
+            choice = input("   Select option (0-13): ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
         if choice == "0":
             break
         elif choice == "1":
-            cmd_firewall()
+            cmd_install_strategy(base_dir)
             input("\n   Press Enter to return to menu...")
         elif choice == "2":
+            cmd_remove_strategy()
+            input("\n   Press Enter to return to menu...")
+        elif choice == "3":
             if is_running:
                 print(f"\n   [i] Bridge already running (PID: {current_pid}).")
             else:
@@ -1704,10 +1990,10 @@ def cmd_menu(base_dir):
                 time.sleep(1.5)
                 print("\n   [+] Фоновая служба успешно запущена!")
             time.sleep(1)
-        elif choice == "3":
+        elif choice == "4":
             cmd_stop(base_dir)
             time.sleep(1)
-        elif choice == "4":
+        elif choice == "5":
             cmd_stop(base_dir)
             time.sleep(1)
             if getattr(sys, "frozen", False):
@@ -1725,26 +2011,29 @@ def cmd_menu(base_dir):
             time.sleep(1.5)
             print("\n   [+] Служба успешно перезапущена!")
             time.sleep(1)
-        elif choice == "5":
+        elif choice == "6":
             cmd_status(base_dir)
             input("   Press Enter to return to menu...")
-        elif choice == "6":
+        elif choice == "7":
             cmd_startup(not os.path.exists(startup_shortcut), base_dir)
             input("\n   Press Enter to return to menu...")
-        elif choice == "7":
+        elif choice == "8":
+            cmd_fix_proxy()
+            input("\n   Press Enter to return to menu...")
+        elif choice == "9":
             cmd_secret(base_dir)
             input("   Press Enter to return to menu...")
-        elif choice == "8":
+        elif choice == "10":
             lists_dir = os.path.join(base_dir, "lists")
             if os.path.exists(lists_dir):
                 os.startfile(lists_dir)
             else:
                 print(f"\n   [i] Lists folder not found at: {lists_dir}")
                 time.sleep(1.5)
-        elif choice == "9":
+        elif choice == "11":
             import webbrowser
             webbrowser.open(f"http://{host_port}/")
-        elif choice == "10":
+        elif choice == "12":
             log_path = os.path.join(base_dir, "tv_proxy.log")
             if os.path.exists(log_path):
                 print(f"\n   [*] Открытие лога в реальном времени (Нажмите Ctrl+C для выхода)...")
@@ -1756,7 +2045,7 @@ def cmd_menu(base_dir):
             else:
                 print("\n   [i] Журнал tv_proxy.log пока пуст.")
                 time.sleep(1.5)
-        elif choice == "11":
+        elif choice == "13":
             cmd_test()
             input("   Press Enter to return to menu...")
 
@@ -1774,6 +2063,54 @@ def main():
     parser.add_argument("--stop", action="store_true", help="Stop running bridge daemon")
     parser.add_argument("--restart", action="store_true", help="Restart running bridge daemon")
     parser.add_argument("--firewall", action="store_true", help="Add Windows Firewall rules")
+    parser.add_argument("--startup-enable", action="store_true", help="Enable Windows Startup")
+    parser.add_argument("--startup-disable", action="store_true", help="Disable Windows Startup")
+    parser.add_argument("--secret", action="store_true", help="Generate a new Telegram secret")
+    parser.add_argument("--test", action="store_true", help="Run network and DoH diagnostics test")
+    parser.add_argument("--install-strategy", nargs="?", const="interactive", default=None, help="Install Zapret service with strategy")
+    parser.add_argument("--remove-service", action="store_true", help="Stop and remove Zapret Windows service")
+    parser.add_argument("--fix-proxy", action="store_true", help="Clear Windows System Proxy to protect Antigravity / AG Configurator")
+    args = parser.parse_args()
+
+    # Handle standalone CLI commands
+    if args.menu:
+        cmd_menu(base_dir)
+        sys.exit(0)
+    if args.status:
+        cmd_status(base_dir)
+        sys.exit(0)
+    if args.stop:
+        cmd_stop(base_dir)
+        sys.exit(0)
+    if args.restart:
+        cmd_stop(base_dir)
+        time.sleep(1)
+        # Continue to start
+    if args.firewall:
+        cmd_firewall()
+        sys.exit(0)
+    if args.startup_enable:
+        cmd_startup(True, base_dir)
+        sys.exit(0)
+    if args.startup_disable:
+        cmd_startup(False, base_dir)
+        sys.exit(0)
+    if args.secret:
+        cmd_secret(base_dir)
+        sys.exit(0)
+    if args.test:
+        cmd_test()
+        sys.exit(0)
+    if args.install_strategy:
+        strat = None if args.install_strategy == "interactive" else args.install_strategy
+        cmd_install_strategy(base_dir, strat)
+        sys.exit(0)
+    if args.remove_service:
+        cmd_remove_strategy()
+        sys.exit(0)
+    if args.fix_proxy:
+        cmd_fix_proxy()
+        sys.exit(0)
     parser.add_argument("--startup-enable", action="store_true", help="Enable Windows Startup")
     parser.add_argument("--startup-disable", action="store_true", help="Disable Windows Startup")
     parser.add_argument("--secret", action="store_true", help="Generate a new Telegram secret")

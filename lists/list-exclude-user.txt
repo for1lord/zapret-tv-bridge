@@ -2,3 +2,10 @@ domain.example.abc
 
 cloudcode-pa.googleapis.com
 daily-cloudcode-pa.googleapis.com
+googleapis.com
+geohide.ru
+dns-ai.ru
+chatgpt.com
+openai.com
+anthropic.com
+claude.ai

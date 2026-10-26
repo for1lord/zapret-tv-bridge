@@ -11,9 +11,10 @@
 1. Скачайте архив `zapret-tv-bridge-v1.01.zip` из раздела Releases и распакуйте в любую папку.
 2. Запустите единственный файл для настройки — **`service.bat`** (запустится от имени администратора).
 3. В открывшемся интерактивном меню:
-   - Нажмите **`1`**, чтобы автоматически настроить Брандмауэр Windows (порты 8080 и 1443).
-   - Нажмите **`2`**, чтобы запустить службу моста в тихом фоновом режиме.
-   - Нажмите **`5`**, чтобы увидеть готовые ссылки и параметры подключения для ваших устройств.
+   - Нажмите **`1`**, чтобы выбрать и установить службу Zapret с нужной стратегией (например, `general (ALT12)`). Скрипт также автоматически откроет порты 8080 и 1443 в Брандмауэре Windows.
+   - Нажмите **`2`**, если потребуется остановить и удалить службу Zapret.
+   - Нажмите **`3`**, чтобы запустить службу моста (Bridge) в тихом фоновом режиме.
+   - Нажмите **`6`**, чтобы увидеть готовые ссылки и параметры подключения для ваших устройств.
 
 *Примечание: Вы также можете запустить автономный исполняемый файл `bin\ZapretTVBridge.exe` напрямую — он полностью автономен и не требует установленного Python.*
 
@@ -47,28 +48,32 @@
 ==================================================
 ZAPRET TV & MOBILE BRIDGE MANAGER v1.01
 ==================================================
-Status:    [RUNNING] (PID: ...)
-Address:   http://192.168.0.x:8080/
-PAC URL:   http://192.168.0.x:8080/proxy.pac
-Smart TV:  IP 192.168.0.x  Port 8080
+Zapret Service: [RUNNING - general (ALT12)]
+Bridge Status:  [RUNNING - PID: ...]
+Address:        http://192.168.0.x:8080/
+PAC URL:        http://192.168.0.x:8080/proxy.pac
+Smart TV:       IP 192.168.0.x  Port 8080
+Directory:      D:\projects\zapret-tv-bridge\
 --------------------------------------------------
 
 :: SERVICE
-   1. Install Service / Firewall Rules
-   2. Start Bridge (Background)
-   3. Stop Bridge
-   4. Restart Bridge
-   5. Check Status & Connection URLs
+   1. Install Zapret Service (Choose Strategy)
+   2. Remove Zapret Service (Stop & Delete)
+   3. Start Bridge (Background)
+   4. Stop Bridge
+   5. Restart Bridge
+   6. Check Status & Connection URLs
 
 :: SETTINGS & AUTORUN
-   6. Windows Startup              [enabled / disabled]
-   7. Generate New Telegram MTProto Key
-   8. Open Domain Routing Lists Folder
+   7. Windows Startup              [enabled / disabled]
+   8. Fix Windows Proxy (Protect Antigravity / AG Configurator)
+   9. Generate New Telegram MTProto Key
+   10. Open Domain Routing Lists Folder
 
 :: TOOLS & LOGS
-   9. Open Web Dashboard in Browser
-   10. View Live Logs (tv_proxy.log)
-   11. Run Diagnostics & DoH Latency Test
+   11. Open Web Dashboard in Browser
+   12. View Live Logs (tv_proxy.log)
+   13. Run Diagnostics & DoH Latency Test
 
 --------------------------------------------------
    0. Exit
