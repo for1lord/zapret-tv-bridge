@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Runtime and local state files
+*.pid
+*.ip
+*.log
+tv_proxy.pid
+tv_proxy.ip
+tv_proxy.log
+tg_proxy.log
+test_tg.log
+err.log
+
+# Local secrets & data files
+tg_secret.txt
+TELEGRAM_CONNECT_INFO.txt
+anticensority_data.json
+routing_rules.json
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Archives and bundles
+*.zip
+*.tar.gz
+*.7z
+
+# IDE and OS specific
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
