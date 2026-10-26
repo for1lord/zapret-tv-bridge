@@ -1,0 +1,20 @@
+# Never leave this file empty
+domain.example.abc
+flibusta.is
+lostfilm.tv
+rezka.ag
+hdrezka.me
+kinozal.tv
+apps.apple.com
+amp-api-search-edge.apps.apple.com
+amp-api.apps.apple.com
+amp-api-edge.apps.apple.com
+instagram.com
+cdninstagram.com
+facebook.com
+fbcdn.net
+threads.net
+ig.me
+meta.com
+static.rutracker.cc
+pages.dev

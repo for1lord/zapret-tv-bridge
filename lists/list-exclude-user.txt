@@ -1,0 +1,4 @@
+domain.example.abc
+
+cloudcode-pa.googleapis.com
+daily-cloudcode-pa.googleapis.com
