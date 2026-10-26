@@ -1403,8 +1403,8 @@ function copyText(val, btn) {{
                 t.start()
         except KeyboardInterrupt:
             self.log("[*] Остановка моста по сигналу...")
-        except Exception as e:
-            self.log(f"[ERROR] Ошибка в цикле приема соединений: {e}")
+        except BaseException as e:
+            self.log(f"[FATAL] Ошибка в цикле приема соединений: {type(e).__name__}: {e}")
         finally:
             self.running = False
             if tg_stop_event:
@@ -1428,6 +1428,66 @@ function copyText(val, btn) {{
             if ip_file and os.path.exists(ip_file):
                 try: os.remove(ip_file)
                 except Exception: pass
+
+
+def cmd_start(base_dir):
+    """Starts the bridge daemon in a fully detached background process."""
+    pid_file = os.path.join(base_dir, "tv_proxy.pid")
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r", encoding="utf-8") as f:
+                c_pid = int(f.read().strip())
+            if is_pid_alive(c_pid):
+                print(f"[i] Zapret TV Bridge уже запущен в фоне [PID: {c_pid}].")
+                return True
+        except Exception:
+            pass
+
+    print("[*] Запуск Zapret TV & Mobile Bridge в тихом фоновом режиме...")
+    if getattr(sys, "frozen", False):
+        exe_path = os.path.abspath(sys.executable)
+        cmd = [exe_path, "--daemon"]
+    else:
+        py_bin = sys.executable
+        if "python.exe" in py_bin.lower():
+            pyw = py_bin.lower().replace("python.exe", "pythonw.exe")
+            if os.path.exists(pyw):
+                py_bin = pyw
+        cmd = [py_bin, os.path.abspath(__file__), "--daemon"]
+
+    cflags = 0
+    if os.name == "nt":
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        cflags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+    proc = subprocess.Popen(cmd, cwd=base_dir, creationflags=cflags, close_fds=True)
+    time.sleep(2)
+
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r", encoding="utf-8") as f:
+                new_pid = int(f.read().strip())
+            if is_pid_alive(new_pid):
+                print(f"[+] Сервис успешно запущен в фоне [PID: {new_pid}].")
+                return True
+        except Exception:
+            pass
+
+    if is_pid_alive(proc.pid):
+        print(f"[+] Сервис успешно запущен в фоне [PID: {proc.pid}].")
+        return True
+
+    print("[!] Не удалось запустить службу в фоне. Проверьте tv_proxy.log.")
+    return False
+
+
+def cmd_restart(base_dir):
+    """Restarts the bridge background daemon."""
+    print("[*] Перезапуск моста...")
+    cmd_stop(base_dir)
+    time.sleep(1)
+    return cmd_start(base_dir)
 
 
 def cmd_stop(base_dir):
@@ -1510,21 +1570,21 @@ def cmd_status(base_dir):
     print("  ==================================================")
     if zapret_running:
         strat_str = f" [{zapret_strat}]" if zapret_strat else ""
-        print(f"  Служба Zapret:АКТИВНА{strat_str}")
+        print(f"  Служба Zapret:  АКТИВНА{strat_str}")
     else:
-        print("  Служба Zapret:ОСТАНОВЛЕНА / НЕ УСТАНОВЛЕНА")
+        print("  Служба Zapret:  ОСТАНОВЛЕНА / НЕ УСТАНОВЛЕНА")
 
     if is_running:
-        print(f"  Мост (Bridge): АКТИВЕН [PID: {current_pid}]")
-        print(f"  Адрес:        http://{host_port}/")
-        print(f"  PAC URL:      http://{host_port}/proxy.pac")
-        print(f"  Smart TV:     IP {local_ip}  Порт {local_port}")
+        print(f"  Мост [Bridge]:  АКТИВЕН [PID: {current_pid}]")
+        print(f"  Адрес:          http://{host_port}/")
+        print(f"  PAC URL:        http://{host_port}/proxy.pac")
+        print(f"  Smart TV:       IP {local_ip}  Порт {local_port}")
         if tg_secret:
-            print(f"  Telegram:     tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
+            print(f"  Telegram:       tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
     else:
-        print("  Мост (Bridge): ОСТАНОВЛЕН (Фоновый процесс не запущен)")
-        print(f"  Локальный IP: {local_ip}")
-    print(f"  Автозагрузка: {'[Включена]' if startup_enabled else '[Отключена]'}")
+        print("  Мост [Bridge]:  ОСТАНОВЛЕН [Фоновый процесс не запущен]")
+        print(f"  Локальный IP:   {local_ip}")
+    print(f"  Автозагрузка:   {'[Включена]' if startup_enabled else '[Отключена]'}")
     print("  --------------------------------------------------")
     print()
 
@@ -1551,7 +1611,7 @@ def get_zapret_service_status():
 
 
 def discover_zapret_strategies(base_dir):
-    """Discovers available Zapret strategy presets."""
+    """Discovers available Zapret strategy presets with 'general' strictly first."""
     import glob
     search_dirs = [
         os.path.join(base_dir, "presets"),
@@ -1567,10 +1627,32 @@ def discover_zapret_strategies(base_dir):
             bats = glob.glob(os.path.join(d, "*.bat"))
             candidates = [b for b in bats if not os.path.basename(b).lower().startswith("service")]
             if candidates:
-                def sort_key(p):
-                    parts = re.split(r'(\d+)', os.path.basename(p))
-                    return [int(x) if x.isdigit() else x.lower() for x in parts]
-                candidates.sort(key=sort_key)
+                def strategy_sort_key(p):
+                    name = os.path.splitext(os.path.basename(p))[0].strip()
+                    if name.lower() == "general":
+                        return (0, 0, "")
+                    if name.lower() == "general (alt)":
+                        return (1, 1, "")
+                    m_alt = re.match(r"general \(alt(\d+)\)", name, re.IGNORECASE)
+                    if m_alt:
+                        return (1, int(m_alt.group(1)), "")
+                    if "exp" in name.lower():
+                        return (2, 0, name.lower())
+                    if "fake tls auto" in name.lower():
+                        sub = 0
+                        if "alt" in name.lower():
+                            m_sub = re.search(r"alt(\d*)", name.lower())
+                            sub = int(m_sub.group(1)) if m_sub and m_sub.group(1) else 1
+                        return (3, sub, name.lower())
+                    if "simple fake" in name.lower():
+                        sub = 0
+                        if "alt" in name.lower():
+                            m_sub = re.search(r"alt(\d*)", name.lower())
+                            sub = int(m_sub.group(1)) if m_sub and m_sub.group(1) else 1
+                        return (4, sub, name.lower())
+                    return (5, 0, name.lower())
+
+                candidates.sort(key=strategy_sort_key)
                 return [(os.path.splitext(os.path.basename(b))[0], b) for b in candidates]
     return []
 
@@ -1670,7 +1752,7 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         print("      0. Отмена")
         print()
         try:
-            choice = input(f"  Выберите стратегию (1-{len(strategies)}, 0 для отмены): ").strip()
+            choice = input(f"  Выберите стратегию [1-{len(strategies)}, 0 для отмены]: ").strip()
         except (KeyboardInterrupt, EOFError):
             return False
 
@@ -1935,22 +2017,22 @@ def cmd_menu(base_dir):
         print("  --------------------------------------------------")
         print()
         print("  :: SERVICE")
-        print("     1. Install Zapret Service (Choose Strategy)")
-        print("     2. Remove Zapret Service (Stop & Delete)")
-        print("     3. Start Bridge (Background)")
+        print("     1. Install Zapret Service [Choose Strategy]")
+        print("     2. Remove Zapret Service [Stop & Delete]")
+        print("     3. Start Bridge [Background]")
         print("     4. Stop Bridge")
         print("     5. Restart Bridge")
         print("     6. Check Status & Connection URLs")
         print()
         print("  :: SETTINGS & AUTORUN")
         print(f"     7. Windows Startup              {startup_status}")
-        print("     8. Fix Windows Proxy (Protect Antigravity / AG Configurator)")
+        print("     8. Fix Windows Proxy [Protect Antigravity / AG Configurator]")
         print("     9. Generate New Telegram MTProto Key")
         print("     10. Open Domain Lists Folder")
         print()
         print("  :: TOOLS & LOGS")
         print("     11. Open Web Dashboard in Browser")
-        print("     12. View Live Logs (tv_proxy.log)")
+        print("     12. View Live Logs [tv_proxy.log]")
         print("     13. Run Diagnostics & DoH Latency Test")
         print()
         print("  --------------------------------------------------")
@@ -1959,7 +2041,7 @@ def cmd_menu(base_dir):
         print()
 
         try:
-            choice = input("   Select option (0-13): ").strip()
+            choice = input("   Select option [0-13]: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -1972,45 +2054,14 @@ def cmd_menu(base_dir):
             cmd_remove_strategy()
             input("\n   Press Enter to return to menu...")
         elif choice == "3":
-            if is_running:
-                print(f"\n   [i] Bridge already running (PID: {current_pid}).")
-            else:
-                if getattr(sys, "frozen", False):
-                    target_exe = os.path.abspath(sys.executable)
-                    ps_cmd = f"Start-Process '{target_exe}' -ArgumentList '--daemon' -WindowStyle Hidden"
-                    subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd])
-                else:
-                    py_bin = sys.executable
-                    if "python.exe" in py_bin.lower():
-                        pyw = py_bin.lower().replace("python.exe", "pythonw.exe")
-                        if os.path.exists(pyw): py_bin = pyw
-                    cmd = [py_bin, os.path.abspath(__file__), "--daemon"]
-                    cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                    subprocess.Popen(cmd, cwd=base_dir, creationflags=cflags)
-                time.sleep(1.5)
-                print("\n   [+] Фоновая служба успешно запущена!")
-            time.sleep(1)
+            cmd_start(base_dir)
+            input("\n   Press Enter to return to menu...")
         elif choice == "4":
             cmd_stop(base_dir)
-            time.sleep(1)
+            input("\n   Press Enter to return to menu...")
         elif choice == "5":
-            cmd_stop(base_dir)
-            time.sleep(1)
-            if getattr(sys, "frozen", False):
-                target_exe = os.path.abspath(sys.executable)
-                ps_cmd = f"Start-Process '{target_exe}' -ArgumentList '--daemon' -WindowStyle Hidden"
-                subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd])
-            else:
-                py_bin = sys.executable
-                if "python.exe" in py_bin.lower():
-                    pyw = py_bin.lower().replace("python.exe", "pythonw.exe")
-                    if os.path.exists(pyw): py_bin = pyw
-                cmd = [py_bin, os.path.abspath(__file__), "--daemon"]
-                cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                subprocess.Popen(cmd, cwd=base_dir, creationflags=cflags)
-            time.sleep(1.5)
-            print("\n   [+] Служба успешно перезапущена!")
-            time.sleep(1)
+            cmd_restart(base_dir)
+            input("\n   Press Enter to return to menu...")
         elif choice == "6":
             cmd_status(base_dir)
             input("   Press Enter to return to menu...")
@@ -2060,6 +2111,7 @@ def main():
     parser.add_argument("--no-tg", action="store_true", help="Disable Telegram MTProto bridge")
     parser.add_argument("--menu", action="store_true", help="Launch interactive Zapret-style console manager")
     parser.add_argument("--status", action="store_true", help="Display bridge status and connection URLs")
+    parser.add_argument("--start", action="store_true", help="Start bridge daemon in background")
     parser.add_argument("--stop", action="store_true", help="Stop running bridge daemon")
     parser.add_argument("--restart", action="store_true", help="Restart running bridge daemon")
     parser.add_argument("--firewall", action="store_true", help="Add Windows Firewall rules")
@@ -2079,13 +2131,15 @@ def main():
     if args.status:
         cmd_status(base_dir)
         sys.exit(0)
+    if args.start:
+        cmd_start(base_dir)
+        sys.exit(0)
     if args.stop:
         cmd_stop(base_dir)
         sys.exit(0)
     if args.restart:
-        cmd_stop(base_dir)
-        time.sleep(1)
-        # Continue to start
+        cmd_restart(base_dir)
+        sys.exit(0)
     if args.firewall:
         cmd_firewall()
         sys.exit(0)
@@ -2110,41 +2164,6 @@ def main():
         sys.exit(0)
     if args.fix_proxy:
         cmd_fix_proxy()
-        sys.exit(0)
-    parser.add_argument("--startup-enable", action="store_true", help="Enable Windows Startup")
-    parser.add_argument("--startup-disable", action="store_true", help="Disable Windows Startup")
-    parser.add_argument("--secret", action="store_true", help="Generate a new Telegram secret")
-    parser.add_argument("--test", action="store_true", help="Run network and DoH diagnostics test")
-    args = parser.parse_args()
-
-    # Handle standalone CLI commands
-    if args.menu:
-        cmd_menu(base_dir)
-        sys.exit(0)
-    if args.status:
-        cmd_status(base_dir)
-        sys.exit(0)
-    if args.stop:
-        cmd_stop(base_dir)
-        sys.exit(0)
-    if args.restart:
-        cmd_stop(base_dir)
-        time.sleep(1)
-        # Continue to start
-    if args.firewall:
-        cmd_firewall()
-        sys.exit(0)
-    if args.startup_enable:
-        cmd_startup(True, base_dir)
-        sys.exit(0)
-    if args.startup_disable:
-        cmd_startup(False, base_dir)
-        sys.exit(0)
-    if args.secret:
-        cmd_secret(base_dir)
-        sys.exit(0)
-    if args.test:
-        cmd_test()
         sys.exit(0)
 
     # If run with no arguments in an interactive console, default to the menu
@@ -2180,13 +2199,13 @@ def main():
             base_dir=base_dir
         )
         bridge.run(pid_file=pid_file, ip_file=ip_file)
-    except Exception as e:
+    except BaseException as e:
         import traceback
         tb = traceback.format_exc()
         if log_file:
             try:
                 with open(log_file, "a", encoding="utf-8") as f:
-                    f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [FATAL] {tb}\n")
+                    f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [FATAL] {type(e).__name__}: {e}\n{tb}\n")
             except Exception:
                 pass
         if pid_file and os.path.exists(pid_file):

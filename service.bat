@@ -28,7 +28,7 @@ if errorlevel 1 goto :main_init
 exit /b
 
 :main_init
-title Администратор: ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.01
+title ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.01
 
 :: Locate executable or python environment
 set "BRIDGE_EXE=%PROJECT_DIR%bin\ZapretTVBridge.exe"
@@ -89,22 +89,22 @@ echo   Directory:      %PROJECT_DIR%
 echo   --------------------------------------------------
 echo.
 echo   :: SERVICE
-echo      1. Install Zapret Service (Choose Strategy)
-echo      2. Remove Zapret Service (Stop ^& Delete)
-echo      3. Start Bridge (Background)
+echo      1. Install Zapret Service [Choose Strategy]
+echo      2. Remove Zapret Service [Stop ^& Delete]
+echo      3. Start Bridge [Background]
 echo      4. Stop Bridge
 echo      5. Restart Bridge
 echo      6. Check Status ^& Connection URLs
 echo.
 echo   :: SETTINGS ^& AUTORUN
 echo      7. Windows Startup              !STARTUP_STATUS!
-echo      8. Fix Windows Proxy (Protect Antigravity / AG Configurator)
+echo      8. Fix Windows Proxy [Protect Antigravity / AG Configurator]
 echo      9. Generate New Telegram MTProto Key
 echo      10. Open Domain Routing Lists Folder
 echo.
 echo   :: TOOLS ^& LOGS
 echo      11. Open Web Dashboard in Browser
-echo      12. View Live Logs (tv_proxy.log)
+echo      12. View Live Logs [tv_proxy.log]
 echo      13. Run Diagnostics ^& DoH Latency Test
 echo.
 echo   --------------------------------------------------
@@ -113,7 +113,7 @@ echo   --------------------------------------------------
 echo.
 
 set "CHOICE="
-set /p CHOICE="   Select option (0-13): "
+set /p CHOICE="   Select option [0-13]: "
 
 if not defined CHOICE goto :menu_loop
 if "%CHOICE%"=="1" goto :opt_install_zapret
@@ -221,23 +221,14 @@ goto :menu_loop
 :: -----------------------------------------------------------------------------
 :opt_start
 cls
-echo.
-echo [*] Запуск Zapret TV ^& Mobile Bridge в тихом фоновом режиме...
-if "!IS_RUNNING!"=="1" (
-    echo [i] Сервис уже запущен [PID: !CURRENT_PID!].
-    timeout /t 2 >nul
-    goto :menu_loop
-)
-
 if "!USE_STANDALONE!"=="1" (
-    powershell -NoProfile -Command "Start-Process '%BRIDGE_EXE%' -ArgumentList '--daemon' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden"
+    "%BRIDGE_EXE%" --start
 ) else (
-    start /b "" "%PY_BIN%" "%PROJECT_DIR%zapret_tv_bridge.py" --daemon
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --start
 )
-
-timeout /t 2 /nobreak >nul
-echo [+] Сервис успешно запущен.
 if defined CLI_CMD exit /b
+echo.
+pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
@@ -245,16 +236,14 @@ goto :menu_loop
 :: -----------------------------------------------------------------------------
 :opt_stop
 cls
-echo.
-echo [*] Остановка Zapret TV ^& Mobile Bridge...
 if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --stop
 ) else (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --stop
 )
-echo [+] Сервис остановлен.
-timeout /t 1 >nul
 if defined CLI_CMD exit /b
+echo.
+pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
@@ -262,20 +251,14 @@ goto :menu_loop
 :: -----------------------------------------------------------------------------
 :opt_restart
 cls
-echo.
-echo [*] Перезапуск моста...
 if "!USE_STANDALONE!"=="1" (
-    "%BRIDGE_EXE%" --stop
-    timeout /t 1 /nobreak >nul
-    powershell -NoProfile -Command "Start-Process '%BRIDGE_EXE%' -ArgumentList '--daemon' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden"
+    "%BRIDGE_EXE%" --restart
 ) else (
-    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --stop
-    timeout /t 1 /nobreak >nul
-    start /b "" "%PY_BIN%" "%PROJECT_DIR%zapret_tv_bridge.py" --daemon
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --restart
 )
-timeout /t 2 /nobreak >nul
-echo [+] Мост успешно перезапущен.
 if defined CLI_CMD exit /b
+echo.
+pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
@@ -365,7 +348,7 @@ cls
 echo.
 echo [*] Открытие папки со списками доменов...
 start explorer.exe "%PROJECT_DIR%lists"
-timeout /t 1 >nul
+ping 127.0.0.1 -n 2 >nul
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
