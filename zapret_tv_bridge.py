@@ -29,6 +29,10 @@ import json
 import re
 import subprocess
 import argparse
+try:
+    from wintun_gateway import WintunGatewayManager, SplitRouteManager
+except ImportError:
+    WintunGatewayManager, SplitRouteManager = None, None
 
 if sys.platform == "win32":
     try:
@@ -2054,8 +2058,86 @@ def cmd_test():
     print()
 
 
+
+
+def cmd_wintun_start(base_dir):
+    """Starts the Wintun L3 Virtual Network Adapter with Split Tunneling."""
+    ensure_admin()
+    if not is_admin():
+        print("\n[!] Ошибка: Для запуска виртуального адаптера Wintun требуются права Администратора.")
+        return False
+    if not WintunGatewayManager:
+        print("\n[!] Ошибка: Модуль wintun_gateway не доступен.")
+        return False
+
+    # Ensure local bridge daemon is running for tun2socks proxying
+    bridge_running = False
+    pid_file = os.path.join(base_dir, "tv_proxy.pid")
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r", encoding="utf-8") as f:
+                p = int(f.read().strip())
+            if is_pid_alive(p):
+                bridge_running = True
+        except Exception:
+            pass
+    if not bridge_running:
+        print("[*] Локальный Bridge не запущен. Автоматически запускаю Bridge...")
+        cmd_start(base_dir)
+        time.sleep(1.0)
+
+    mgr = WintunGatewayManager(base_dir)
+    return mgr.start_gateway("http://127.0.0.1:8080")
+
+
+def cmd_wintun_stop(base_dir):
+    """Stops Wintun L3 Gateway and safely restores routes."""
+    ensure_admin()
+    if not WintunGatewayManager:
+        return False
+    mgr = WintunGatewayManager(base_dir)
+    return mgr.stop_gateway()
+
+
+def cmd_wintun_status(base_dir):
+    """Displays Wintun Gateway status and active routes info."""
+    if not WintunGatewayManager:
+        print("[!] WintunGatewayManager не инициализирован.")
+        return
+    mgr = WintunGatewayManager(base_dir)
+    st = mgr.get_status()
+    print("\n  ==================================================")
+    print("  WINTUN L3 GATEWAY STATUS (SPLIT TUNNELING)")
+    print("  ==================================================")
+    print(f"  Статус шлюза:       {'[RUNNING]' if st['running'] else '[STOPPED]'}")
+    if st['running']:
+        print(f"  PID tun2socks:      {st['pid']}")
+        print(f"  Виртуальный адаптер:{st['adapter_name']}")
+        print(f"  L3 IP-адрес:        {st['adapter_ip']}/30")
+        print(f"  Активных префиксов: {st['active_routes_count']}")
+    print("  Системный прокси:   [0 - НЕ ТРОНУТ, ПОЛНОСТЬЮ ОТКЛЮЧЕН]")
+    print("  Среды разработки:   [100% ПРЯМОЙ ДОСТУП, БЕЗ ВМЕШАТЕЛЬСТВА]")
+    print("  --------------------------------------------------\n")
+
+
+def cmd_wintun_routes(base_dir):
+    """Displays list of target CIDR subnets routed into Wintun."""
+    if not WintunGatewayManager:
+        return
+    mgr = WintunGatewayManager(base_dir)
+    routes = mgr.route_manager.load_target_subnets()
+    print(f"\n  ==================================================")
+    print(f"  ЦЕЛЕВЫЕ ПОДСЕТИ SPLIT TUNNELING ({len(routes)} префиксов)")
+    print("  ==================================================")
+    for i, r in enumerate(routes, 1):
+        print(f"   {i:2d}. {r}")
+    print("  --------------------------------------------------")
+    print("  [i] Все остальные адреса (включая 127.0.0.1, LAN и 0.0.0.0/0)")
+    print("      идут напрямую через ваш физический сетевой адаптер.")
+    print("  --------------------------------------------------\n")
+
 def cmd_menu(base_dir):
-    """Interactive Zapret-style CMD Menu."""
+    """Interactive Console Manager with Wintun L3 Gateway & TV Bridge."""
     while True:
         try:
             os.system("cls" if os.name == "nt" else "clear")
@@ -2101,6 +2183,17 @@ def cmd_menu(base_dir):
 
         startup_status = "[enabled]" if os.path.exists(startup_shortcut) else "[disabled]"
 
+        wintun_label = "[STOPPED]"
+        if WintunGatewayManager:
+            try:
+                w_mgr = WintunGatewayManager(base_dir)
+                w_run, w_pid = w_mgr.is_running()
+                if w_run:
+                    st = w_mgr.get_status()
+                    wintun_label = f"[RUNNING - PID: {w_pid}, {st['active_routes_count']} routes]"
+            except Exception:
+                pass
+
         zapret_running, zapret_strat = get_zapret_service_status()
         if zapret_running:
             zapret_label = f"[RUNNING - {zapret_strat}]" if zapret_strat else "[RUNNING]"
@@ -2109,95 +2202,101 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.01")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.02")
         print("  ==================================================")
-        print(f"  Zapret Service: {zapret_label}")
+        print(f"  Wintun L3 Gateway: {wintun_label}")
+        print(f"  TV & Mobile Bridge: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
         if is_running:
-            print(f"  Bridge Status:  [RUNNING - PID: {current_pid}]")
-            print(f"  Address:        http://{host_port}/")
-            print(f"  PAC URL:        http://{host_port}/proxy.pac")
-            print(f"  Smart TV:       IP {local_ip}  Port {local_port}")
+            print(f"  Address:           http://{host_port}/")
+            print(f"  PAC URL:           http://{host_port}/proxy.pac")
+            print(f"  Smart TV:          IP {local_ip}  Port {local_port}")
             if tg_secret:
-                print(f"  Telegram:       tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
-        else:
-            print("  Bridge Status:  [STOPPED]")
-            print("  Address:        Не активен")
-        print(f"  Directory:      {base_dir}")
+                print(f"  Telegram:          tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
+        print(f"  Directory:         {base_dir}")
         print("  --------------------------------------------------")
         print()
-        print("  :: SERVICE")
-        print("     1. Install Zapret Service [Choose Strategy]")
-        print("     2. Remove Zapret Service [Stop & Delete]")
-        print("     3. Start Bridge [Background]")
-        print("     4. Stop Bridge")
-        print("     5. Restart Bridge")
-        print("     6. Check Status & Connection URLs")
+        print("  :: WINTUN L3 GATEWAY (SPLIT TUNNELING - RECOMMENDED)")
+        print("     1. Start Wintun Gateway [Isolated L3 TUN + Tun2socks]")
+        print("     2. Stop Wintun Gateway [Clean & Restore Routes]")
+        print("     3. View Active Wintun Subnets & Routes")
+        print()
+        print("  :: TV & MOBILE BRIDGE (LOCAL PROXY)")
+        print("     4. Start Bridge [Background Daemon]")
+        print("     5. Stop Bridge")
+        print("     6. Restart Bridge")
+        print("     7. Check Status & Connection URLs")
         print()
         print("  :: SETTINGS & OPTIMIZATION")
-        print(f"     7. Windows Startup              {startup_status}")
-        print("     8. Optimize Windows 11 Network [Fix Speed, RSC, QUIC, Kyber, IPv6]")
-        print("     9. Fix Windows Proxy [Protect Antigravity / AG Configurator]")
-        print("     10. Generate New Telegram MTProto Key")
-        print("     11. Open Domain Lists Folder")
+        print(f"     8. Windows Startup              {startup_status}")
+        print("     9. Optimize Windows 11 Network [RSC, QUIC, Kyber, IPv6]")
+        print("     10. Fix Windows Proxy [Protect Antigravity / Dev Tools]")
+        print("     11. Generate New Telegram MTProto Key")
+        print("     12. Open Routing Lists Folder")
         print()
         print("  :: TOOLS & LOGS")
-        print("     12. Open Web Dashboard in Browser")
-        print("     13. View Live Logs [tv_proxy.log]")
-        print("     14. Run Diagnostics & DoH Latency Test")
+        print("     13. Open Web Dashboard in Browser")
+        print("     14. View Live Logs")
+        print("     15. Run Diagnostics & DoH Latency Test")
         print()
+        print("  :: LEGACY WINWS SERVICE")
+        print("     16. Install Legacy Zapret Service [Winws Packet Mode]")
+        print("     17. Remove Legacy Zapret Service")
         print("  --------------------------------------------------")
         print("     0. Exit")
         print("  --------------------------------------------------")
         print()
 
         try:
-            choice = input("   Select option [0-14]: ").strip()
+            choice = input("   Select option [0-17]: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
         if choice == "0":
             break
         elif choice == "1":
-            cmd_install_strategy(base_dir)
+            cmd_wintun_start(base_dir)
             input("\n   Press Enter to return to menu...")
         elif choice == "2":
-            cmd_remove_strategy()
+            cmd_wintun_stop(base_dir)
             input("\n   Press Enter to return to menu...")
         elif choice == "3":
+            cmd_wintun_routes(base_dir)
+            input("   Press Enter to return to menu...")
+        elif choice == "4":
             cmd_start(base_dir)
             input("\n   Press Enter to return to menu...")
-        elif choice == "4":
+        elif choice == "5":
             cmd_stop(base_dir)
             input("\n   Press Enter to return to menu...")
-        elif choice == "5":
+        elif choice == "6":
             cmd_restart(base_dir)
             input("\n   Press Enter to return to menu...")
-        elif choice == "6":
+        elif choice == "7":
             cmd_status(base_dir)
             input("   Press Enter to return to menu...")
-        elif choice == "7":
+        elif choice == "8":
             cmd_startup(not os.path.exists(startup_shortcut), base_dir)
             input("\n   Press Enter to return to menu...")
-        elif choice == "8":
+        elif choice == "9":
             cmd_optimize_network()
             input("\n   Press Enter to return to menu...")
-        elif choice == "9":
+        elif choice == "10":
             cmd_fix_proxy()
             input("\n   Press Enter to return to menu...")
-        elif choice == "10":
+        elif choice == "11":
             cmd_secret(base_dir)
             input("   Press Enter to return to menu...")
-        elif choice == "11":
+        elif choice == "12":
             lists_dir = os.path.join(base_dir, "lists")
             if os.path.exists(lists_dir):
                 os.startfile(lists_dir)
             else:
                 print(f"\n   [i] Lists folder not found at: {lists_dir}")
                 time.sleep(1.5)
-        elif choice == "12":
+        elif choice == "13":
             import webbrowser
             webbrowser.open(f"http://{host_port}/")
-        elif choice == "13":
+        elif choice == "14":
             log_path = os.path.join(base_dir, "tv_proxy.log")
             if os.path.exists(log_path):
                 print("\n   [*] Просмотр логов в реальном времени (Ctrl+C для выхода)...")
@@ -2209,9 +2308,15 @@ def cmd_menu(base_dir):
             else:
                 print("\n   [i] Файл tv_proxy.log не найден.")
                 time.sleep(1.5)
-        elif choice == "14":
+        elif choice == "15":
             cmd_test()
             input("   Press Enter to return to menu...")
+        elif choice == "16":
+            cmd_install_strategy(base_dir)
+            input("\n   Press Enter to return to menu...")
+        elif choice == "17":
+            cmd_remove_strategy()
+            input("\n   Press Enter to return to menu...")
 
 
 def main():
@@ -2236,6 +2341,10 @@ def main():
     parser.add_argument("--remove-service", action="store_true", help="Stop and remove Zapret Windows service")
     parser.add_argument("--fix-proxy", action="store_true", help="Clear Windows System Proxy to protect Antigravity / AG Configurator")
     parser.add_argument("--optimize-network", action="store_true", help="Optimize Windows 10/11 network stack (RSC, QUIC, Kyber, IPv6)")
+    parser.add_argument("--wintun-start", action="store_true", help="Start Wintun L3 Gateway with Split Tunneling")
+    parser.add_argument("--wintun-stop", action="store_true", help="Stop Wintun L3 Gateway and restore routes")
+    parser.add_argument("--wintun-status", action="store_true", help="Display Wintun Gateway status")
+    parser.add_argument("--wintun-routes", action="store_true", help="Display target CIDRs for Wintun Split Tunneling")
     args = parser.parse_args()
 
     # Handle standalone CLI commands
@@ -2286,6 +2395,18 @@ def main():
     if args.optimize_network:
         ensure_admin()
         cmd_optimize_network()
+        sys.exit(0)
+    if args.wintun_start:
+        cmd_wintun_start(base_dir)
+        sys.exit(0)
+    if args.wintun_stop:
+        cmd_wintun_stop(base_dir)
+        sys.exit(0)
+    if args.wintun_status:
+        cmd_wintun_status(base_dir)
+        sys.exit(0)
+    if args.wintun_routes:
+        cmd_wintun_routes(base_dir)
         sys.exit(0)
 
     # If run with no arguments in an interactive console, default to the menu

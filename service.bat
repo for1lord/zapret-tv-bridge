@@ -6,6 +6,7 @@ set "PROJECT_DIR=%~dp0"
 cd /d "%PROJECT_DIR%"
 
 set "PID_FILE=%PROJECT_DIR%tv_proxy.pid"
+set "WINTUN_PID_FILE=%PROJECT_DIR%wintun_gateway.pid"
 set "IP_FILE=%PROJECT_DIR%tv_proxy.ip"
 set "SECRET_FILE=%PROJECT_DIR%tg_secret.txt"
 set "LOG_FILE=%PROJECT_DIR%tv_proxy.log"
@@ -23,12 +24,12 @@ if not errorlevel 1 goto :main_init
 :request_admin
 title ZAPRET TV ^& MOBILE BRIDGE MANAGER
 echo Requesting administrator privileges...
-powershell -NoProfile -ExecutionPolicy Unrestricted -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\" admin %*\"' -Verb RunAs" 2>nul
+powershell -NoProfile -ExecutionPolicy Unrestricted -Command "Start-Process cmd.exe -ArgumentList '/c ""%~f0" admin %*"' -Verb RunAs" 2>nul
 if errorlevel 1 goto :main_init
 exit /b
 
 :main_init
-title ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.01
+title ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.02
 
 :: Locate executable or python environment
 set "BRIDGE_EXE=%PROJECT_DIR%bin\ZapretTVBridge.exe"
@@ -46,6 +47,10 @@ if exist "%BRIDGE_EXE%" (
 set "CLI_CMD=%~1"
 if /i "%CLI_CMD%"=="admin" set "CLI_CMD=%~2"
 
+if /i "%CLI_CMD%"=="wintun-start" goto :opt_wintun_start
+if /i "%CLI_CMD%"=="wintun-stop" goto :opt_wintun_stop
+if /i "%CLI_CMD%"=="wintun-routes" goto :opt_wintun_routes
+if /i "%CLI_CMD%"=="wintun-status" goto :opt_wintun_status
 if /i "%CLI_CMD%"=="install" goto :opt_install_zapret
 if /i "%CLI_CMD%"=="remove" goto :opt_remove_zapret
 if /i "%CLI_CMD%"=="start" (
@@ -74,64 +79,71 @@ cls
 
 echo.
 echo   ==================================================
-echo   ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.01
+echo   ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.02
 echo   ==================================================
-echo   Zapret Service: !ZAPRET_STATUS_STR!
+echo   Wintun Gateway: !WINTUN_STATUS_STR!
+echo   TV ^& Mobile:   !STATUS_STR!
+echo   Legacy Winws:   !ZAPRET_STATUS_STR!
 if "!IS_RUNNING!"=="1" (
-    echo   Bridge Status:  !STATUS_STR!
     echo   Address:        http://!HOST_PORT!/
     echo   PAC URL:        http://!HOST_PORT!/proxy.pac
     echo   Smart TV:       IP !LOCAL_IP!  Port !LOCAL_PORT!
-) else (
-    echo   Bridge Status:  !STATUS_STR!
-    echo   Address:        Не активен
 )
 echo   Directory:      %PROJECT_DIR%
 echo   --------------------------------------------------
 echo.
-echo   :: SERVICE
-echo      1. Install Zapret Service [Choose Strategy]
-echo      2. Remove Zapret Service [Stop ^& Delete]
-echo      3. Start Bridge [Background]
-echo      4. Stop Bridge
-echo      5. Restart Bridge
-echo      6. Check Status ^& Connection URLs
+echo   :: WINTUN L3 GATEWAY (SPLIT TUNNELING - RECOMMENDED)
+echo      1. Start Wintun Gateway [Isolated L3 TUN + Tun2socks]
+echo      2. Stop Wintun Gateway [Clean ^& Restore Routes]
+echo      3. View Active Wintun Subnets ^& Routes
+echo.
+echo   :: TV ^& MOBILE BRIDGE (LOCAL PROXY)
+echo      4. Start Bridge [Background]
+echo      5. Stop Bridge
+echo      6. Restart Bridge
+echo      7. Check Status ^& Connection URLs
 echo.
 echo   :: SETTINGS ^& OPTIMIZATION
-echo      7. Windows Startup              !STARTUP_STATUS!
-echo      8. Optimize Windows 11 Network [Fix Speed, RSC, QUIC, Kyber, IPv6]
-echo      9. Fix Windows Proxy [Protect Antigravity / AG Configurator]
-echo      10. Generate New Telegram MTProto Key
-echo      11. Open Domain Routing Lists Folder
+echo      8. Windows Startup              !STARTUP_STATUS!
+echo      9. Optimize Windows 11 Network [RSC, QUIC, Kyber, IPv6]
+echo      10. Fix Windows Proxy [Protect Dev Tools]
+echo      11. Generate New Telegram MTProto Key
+echo      12. Open Routing Lists Folder
 echo.
 echo   :: TOOLS ^& LOGS
-echo      12. Open Web Dashboard in Browser
-echo      13. View Live Logs [tv_proxy.log]
-echo      14. Run Diagnostics ^& DoH Latency Test
+echo      13. Open Web Dashboard in Browser
+echo      14. View Live Logs [tv_proxy.log]
+echo      15. Run Diagnostics ^& DoH Latency Test
 echo.
+echo   :: LEGACY WINWS SERVICE
+echo      16. Install Legacy Zapret Service [Winws Mode]
+echo      17. Remove Legacy Zapret Service
 echo   --------------------------------------------------
 echo      0. Exit
 echo   --------------------------------------------------
 echo.
 
 set "CHOICE="
-set /p CHOICE="   Select option [0-14]: "
+set /p CHOICE="   Select option [0-17]: "
 
 if not defined CHOICE goto :menu_loop
-if "%CHOICE%"=="1" goto :opt_install_zapret
-if "%CHOICE%"=="2" goto :opt_remove_zapret
-if "%CHOICE%"=="3" goto :opt_start
-if "%CHOICE%"=="4" goto :opt_stop
-if "%CHOICE%"=="5" goto :opt_restart
-if "%CHOICE%"=="6" goto :opt_status
-if "%CHOICE%"=="7" goto :opt_startup
-if "%CHOICE%"=="8" goto :opt_optimize
-if "%CHOICE%"=="9" goto :opt_fix_proxy
-if "%CHOICE%"=="10" goto :opt_tg_secret
-if "%CHOICE%"=="11" goto :opt_lists
-if "%CHOICE%"=="12" goto :opt_dashboard
-if "%CHOICE%"=="13" goto :opt_logs
-if "%CHOICE%"=="14" goto :opt_test
+if "%CHOICE%"=="1" goto :opt_wintun_start
+if "%CHOICE%"=="2" goto :opt_wintun_stop
+if "%CHOICE%"=="3" goto :opt_wintun_routes
+if "%CHOICE%"=="4" goto :opt_start
+if "%CHOICE%"=="5" goto :opt_stop
+if "%CHOICE%"=="6" goto :opt_restart
+if "%CHOICE%"=="7" goto :opt_status
+if "%CHOICE%"=="8" goto :opt_startup
+if "%CHOICE%"=="9" goto :opt_optimize
+if "%CHOICE%"=="10" goto :opt_fix_proxy
+if "%CHOICE%"=="11" goto :opt_tg_secret
+if "%CHOICE%"=="12" goto :opt_lists
+if "%CHOICE%"=="13" goto :opt_dashboard
+if "%CHOICE%"=="14" goto :opt_logs
+if "%CHOICE%"=="15" goto :opt_test
+if "%CHOICE%"=="16" goto :opt_install_zapret
+if "%CHOICE%"=="17" goto :opt_remove_zapret
 if "%CHOICE%"=="0" exit /b
 goto :menu_loop
 
@@ -149,6 +161,16 @@ if exist "%PID_FILE%" (
             set "IS_RUNNING=1"
             set "CURRENT_PID=%%p"
             set "STATUS_STR=[RUNNING - PID: %%p]"
+        )
+    )
+)
+
+set "WINTUN_STATUS_STR=[STOPPED]"
+if exist "%WINTUN_PID_FILE%" (
+    for /f "usebackq delims=" %%w in ("%WINTUN_PID_FILE%") do (
+        tasklist /FI "PID eq %%w" 2>nul | findstr /i "%%w" >nul
+        if not errorlevel 1 (
+            set "WINTUN_STATUS_STR=[RUNNING - PID: %%w]"
         )
     )
 )
@@ -190,14 +212,14 @@ if exist "%SHORTCUT_PATH%" set "STARTUP_STATUS=[enabled]"
 exit /b
 
 :: -----------------------------------------------------------------------------
-:: 1. INSTALL ZAPRET SERVICE (CHOOSE STRATEGY)
+:: 1. START WINTUN GATEWAY (SPLIT TUNNELING)
 :: -----------------------------------------------------------------------------
-:opt_install_zapret
+:opt_wintun_start
 cls
 if "!USE_STANDALONE!"=="1" (
-    "%BRIDGE_EXE%" --install-strategy
+    "%BRIDGE_EXE%" --wintun-start
 ) else (
-    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --install-strategy
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --wintun-start
 )
 if defined CLI_CMD exit /b
 echo.
@@ -205,14 +227,14 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 2. REMOVE ZAPRET SERVICE
+:: 2. STOP WINTUN GATEWAY
 :: -----------------------------------------------------------------------------
-:opt_remove_zapret
+:opt_wintun_stop
 cls
 if "!USE_STANDALONE!"=="1" (
-    "%BRIDGE_EXE%" --remove-service
+    "%BRIDGE_EXE%" --wintun-stop
 ) else (
-    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --remove-service
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --wintun-stop
 )
 if defined CLI_CMD exit /b
 echo.
@@ -220,10 +242,45 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 3. START BRIDGE
+:: 3. VIEW WINTUN ROUTES
+:: -----------------------------------------------------------------------------
+:opt_wintun_routes
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --wintun-routes
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --wintun-routes
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:opt_wintun_status
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --wintun-status
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --wintun-status
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 4. START TV & MOBILE BRIDGE
 :: -----------------------------------------------------------------------------
 :opt_start
-cls
+if "!IS_RUNNING!"=="1" (
+    echo.
+    echo [i] Bridge is ALREADY RUNNING (PID: !CURRENT_PID!)
+    echo.
+    if defined CLI_CMD exit /b
+    pause
+    goto :menu_loop
+)
+
 if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --start
 ) else (
@@ -235,10 +292,9 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 4. STOP BRIDGE
+:: 5. STOP TV & MOBILE BRIDGE
 :: -----------------------------------------------------------------------------
 :opt_stop
-cls
 if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --stop
 ) else (
@@ -250,10 +306,9 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 5. RESTART BRIDGE
+:: 6. RESTART TV & MOBILE BRIDGE
 :: -----------------------------------------------------------------------------
 :opt_restart
-cls
 if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --restart
 ) else (
@@ -265,7 +320,7 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 6. STATUS
+:: 7. CHECK STATUS
 :: -----------------------------------------------------------------------------
 :opt_status
 cls
@@ -275,47 +330,35 @@ if "!USE_STANDALONE!"=="1" (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --status
 )
 if defined CLI_CMD exit /b
+echo.
 pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 7. STARTUP TOGGLE
+:: 8. WINDOWS STARTUP
 :: -----------------------------------------------------------------------------
 :opt_startup
 cls
-echo ======================================================================
-echo    Zapret TV ^& Mobile Bridge -- Автозагрузка Windows
-echo ======================================================================
-echo.
 if exist "%SHORTCUT_PATH%" (
-    echo [+] Мост УЖЕ добавлен в автозагрузку Windows.
-    echo.
-    set /p DEL_CHOICE="   Удалить из автозагрузки? (Y/N): "
-    if /i "!DEL_CHOICE!"=="Y" (
-        if "!USE_STANDALONE!"=="1" (
-            "%BRIDGE_EXE%" --startup-disable
-        ) else (
-            python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --startup-disable
-        )
+    if "!USE_STANDALONE!"=="1" (
+        "%BRIDGE_EXE%" --startup-disable
+    ) else (
+        python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --startup-disable
     )
 ) else (
-    echo [*] Мост пока НЕ добавлен в автозагрузку.
-    echo.
-    set /p ADD_CHOICE="   Добавить тихий фоновый запуск в автозагрузку? (Y/N): "
-    if /i "!ADD_CHOICE!"=="Y" (
-        if "!USE_STANDALONE!"=="1" (
-            "%BRIDGE_EXE%" --startup-enable
-        ) else (
-            python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --startup-enable
-        )
+    if "!USE_STANDALONE!"=="1" (
+        "%BRIDGE_EXE%" --startup-enable
+    ) else (
+        python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --startup-enable
     )
 )
+if defined CLI_CMD exit /b
 echo.
 pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 8. OPTIMIZE WINDOWS 11 NETWORK (RSC, QUIC, KYBER, IPV6)
+:: 9. OPTIMIZE WINDOWS 11 NETWORK (RSC, QUIC, KYBER, IPV6)
 :: -----------------------------------------------------------------------------
 :opt_optimize
 cls
@@ -330,7 +373,7 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 9. FIX WINDOWS PROXY (PROTECT ANTIGRAVITY / AG CONFIGURATOR)
+:: 10. FIX WINDOWS PROXY
 :: -----------------------------------------------------------------------------
 :opt_fix_proxy
 cls
@@ -345,7 +388,7 @@ pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 9. TG SECRET
+:: 11. GENERATE NEW TELEGRAM KEY
 :: -----------------------------------------------------------------------------
 :opt_tg_secret
 cls
@@ -355,48 +398,43 @@ if "!USE_STANDALONE!"=="1" (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --secret
 )
 if defined CLI_CMD exit /b
+echo.
 pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 10. DOMAIN LISTS
+:: 12. OPEN LISTS FOLDER
 :: -----------------------------------------------------------------------------
 :opt_lists
-cls
-echo.
-echo [*] Открытие папки со списками доменов...
-start explorer.exe "%PROJECT_DIR%lists"
-ping 127.0.0.1 -n 2 >nul
+if exist "%PROJECT_DIR%lists" (
+    start "" "%PROJECT_DIR%lists"
+) else (
+    echo [i] Folder lists does not exist.
+)
+if defined CLI_CMD exit /b
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 11. DASHBOARD
+:: 13. OPEN DASHBOARD IN BROWSER
 :: -----------------------------------------------------------------------------
 :opt_dashboard
-start http://!HOST_PORT!/
+call :refresh_status
+start "" "http://!HOST_PORT!/"
+if defined CLI_CMD exit /b
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 13. LIVE LOGS
+:: 14. LIVE LOGS
 :: -----------------------------------------------------------------------------
 :opt_logs
 cls
-echo ======================================================================
-echo    Мониторинг журнала tv_proxy.log в реальном времени
-echo    Нажмите Ctrl+C для выхода обратно в меню
-echo ======================================================================
+echo [*] Viewing live logs (Press Ctrl+C to stop)...
 echo.
-if exist "%LOG_FILE%" (
-    powershell -NoProfile -Command "Get-Content -Wait -Tail 30 '%LOG_FILE%'"
-) else (
-    echo [i] Файл журнала tv_proxy.log пока пуст. Запустите мост.
-    echo.
-    pause
-)
+powershell -NoProfile -ExecutionPolicy Unrestricted -Command "Get-Content -Wait -Tail 30 '%LOG_FILE%'"
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: 13. DIAGNOSTICS & TESTS
+:: 15. DIAGNOSTICS & DOH TEST
 :: -----------------------------------------------------------------------------
 :opt_test
 cls
@@ -406,12 +444,40 @@ if "!USE_STANDALONE!"=="1" (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --test
 )
 if defined CLI_CMD exit /b
+echo.
 pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------
-:: FIREWALL DIRECT CLI
+:: 16. INSTALL LEGACY ZAPRET SERVICE
 :: -----------------------------------------------------------------------------
+:opt_install_zapret
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --install-strategy
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --install-strategy
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 17. REMOVE LEGACY ZAPRET SERVICE
+:: -----------------------------------------------------------------------------
+:opt_remove_zapret
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --remove-service
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --remove-service
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
 :opt_firewall
 cls
 if "!USE_STANDALONE!"=="1" (
@@ -420,5 +486,6 @@ if "!USE_STANDALONE!"=="1" (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --firewall
 )
 if defined CLI_CMD exit /b
+echo.
 pause
-goto :menu_loop
+goto :menu_loop
