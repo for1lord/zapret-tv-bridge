@@ -30,6 +30,10 @@ ENV/
 *.zip
 *.tar.gz
 *.7z
+bin/
+build/
+dist/
+*.spec
 
 # IDE and OS specific
 .idea/

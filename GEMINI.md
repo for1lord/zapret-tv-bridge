@@ -11,27 +11,21 @@ Zapret TV & Mobile Bridge — это готовое коробочное реш�
 
 ```text
 D:\projects\zapret-tv-bridge\
-├── 0_SERVICE_MANAGER.bat      # Единый интерактивный консольный менеджер моста (TUI в стиле Zapret)
-├── 1_SETUP.bat                # Установщик: UAC-права, проверка Python, pip install, Windows Firewall
-├── 2_START.vbs                # Тихий запуск моста в фоне через WScript (без черных окон консоли)
-├── 3_STATUS.bat               # Проверка активности PID, отображение IP/портов и ссылок подключения
-├── 4_STOP.bat                 # Завершение всех процессов моста и фонового Telegram
-├── 5_ADD_TO_STARTUP.bat       # Добавление / удаление ярлыка в Windows Startup (shell:startup)
-├── 6_VIEW_LOG.bat             # Мониторинг журнала tv_proxy.log в реальном времени (Get-Content -Wait)
-├── 7_GENERATE_NEW_SECRET.bat  # Быстрая перегенерация случайного ключа Telegram MTProto
-├── zapret_tv_bridge.py        # Основное ядро: HTTP CONNECT прокси, SmartRoutingFilter, PAC-сервер
-├── generate_new_tg_secret.py  # Генератор 32-значного случайного hex-секрета для Telegram
-├── supercell.mobileconfig     # DoT DNS-профиль для iOS (игры Brawl Stars и Clash Royale)
-├── requirements.txt           # Зависимости: cryptography, httpx[http2], certifi
-├── README.md                  # Документация для пользователей (нейтральная, без эмодзи)
-├── LICENSE                    # Лицензия MIT
-├── .gitignore                 # Исключение *.log, *.pid, *.ip, secrets, zip, pycache
-├── lists\                     # Списки доменов маршрутизации
-│   ├── list-general.txt       # Домены для маршрутизации через Zapret (рандомизированы, дедуплицированы)
-│   ├── list-general-user.txt  # Пользовательские домены
-│   ├── list-exclude.txt       # Домены прямого подключения (DIRECT: Яндекс, Сбер, Госуслуги, VK)
-│   └── list-exclude-user.txt  # Исключения пользователя (включая CloudCode / Google API)
-└── tg_ws_proxy\               # Встроенный модуль Flowseal/tg-ws-proxy (порт 1443)
+├── service.bat               # ЕДИНСТВЕННЫЙ файл в корне для настройки и управления (TUI в стиле Zapret)
+├── bin\                      # Автономные бинарные файлы (Zero-Python standalone runtime)
+│   └── ZapretTVBridge.exe    # Скомпилированное ядро моста со встроенным рантаймом и зависимостями
+├── lists\                    # Списки доменов маршрутизации
+│   ├── list-general.txt      # Домены для маршрутизации через Zapret (рандомизированы, дедуплицированы)
+│   ├── list-general-user.txt # Пользовательские домены
+│   ├── list-exclude.txt      # Домены прямого подключения (DIRECT: Яндекс, Сбер, Госуслуги, VK)
+│   └── list-exclude-user.txt # Исключения пользователя (включая CloudCode / Google API)
+├── supercell.mobileconfig    # DoT DNS-профиль для iOS (игры Brawl Stars и Clash Royale)
+├── zapret_tv_bridge.py       # Исходный код ядра моста (HTTP CONNECT, DoH, PAC, In-Process TG)
+├── tg_ws_proxy\              # Модуль Flowseal/tg-ws-proxy (Telegram MTProto WebSocket bridge, порт 1443)
+├── requirements.txt          # Зависимости для запуска из исходного кода
+├── README.md                 # Руководство пользователя (1 файл для настройки, без лишнего мусора)
+├── LICENSE                   # Лицензия MIT
+└── .gitignore                # Исключение временных логов, pid, ip, secrets, cache
 ```
 
 ---

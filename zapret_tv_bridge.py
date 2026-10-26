@@ -30,12 +30,113 @@ import re
 import subprocess
 import argparse
 
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Known unreachable or invalid IPs to ignore
 INVALID_ROUTE_IPS = {"94.190.64.51", "127.0.0.1", "0.0.0.0", "151.101.195.6", "129.134.30.12"}
 
 # In-memory DNS cache: {hostname: (ip_list, expire_time)}
 DNS_CACHE = {}
 DNS_CACHE_LOCK = threading.RLock()
+
+DEFAULT_MOBILECONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>TLS</string>
+                <key>ServerAddresses</key>
+                <array>
+                    <string>45.139.239.54</string>
+                    <string>45.139.239.56</string>
+                    <string>185.175.46.137</string>
+                    <string>141.95.97.120</string>
+                    <string>185.211.245.131</string>
+                </array>
+                <key>ServerName</key>
+                <string>dns.nullsproxy.com</string>
+            </dict>
+            <key>PayloadDescription</key>
+            <string>DNS routing for Supercell games</string>
+            <key>PayloadDisplayName</key>
+            <string>NullsProxy Gaming DNS (Brawl Stars &amp; Clash Royale)</string>
+            <key>PayloadIdentifier</key>
+            <string>com.nullsproxy.dns.settings</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>A5E3F812-4B67-4C90-8D3E-9F1234567890</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Supercell Gaming DNS Profile</string>
+    <key>PayloadDisplayName</key>
+    <string>Supercell Gaming DNS Profile</string>
+    <key>PayloadIdentifier</key>
+    <string>com.nullsproxy.dns.profile</string>
+    <key>PayloadOrganization</key>
+    <string>NullsProxy</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>B7F4E923-5C78-4D01-9E4F-0123456789AB</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>'''
+
+
+def is_pid_alive(pid):
+    """Accurately checks whether a process PID is currently running on Windows."""
+    if not pid or pid <= 0:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h_proc:
+            return False
+        exit_code = wintypes.DWORD()
+        res = kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code))
+        kernel32.CloseHandle(h_proc)
+        # 259 = STILL_ACTIVE
+        return bool(res and exit_code.value == 259)
+    except Exception:
+        return False
+
+
+def get_base_dir():
+    """
+    Returns the root directory of the application.
+    Works whether running as source script, PyInstaller bundle, or inside bin/.
+    """
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        if os.path.basename(exe_dir).lower() == "bin":
+            return os.path.dirname(exe_dir)
+        return exe_dir
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.basename(file_dir).lower() == "bin":
+        return os.path.dirname(file_dir)
+    return file_dir
 
 
 def get_local_ip():
@@ -135,11 +236,36 @@ class SmartRoutingFilter:
 
     def _discover_lists_dir(self, base_dir):
         local_lists = os.path.join(base_dir, "lists")
-        if os.path.exists(local_lists):
-            return local_lists
-        parent_lists = os.path.join(os.path.dirname(base_dir), "lists")
-        if os.path.exists(parent_lists):
-            return parent_lists
+        # Self-extraction of bundled data files if running as PyInstaller standalone executable
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            meipass_lists = os.path.join(sys._MEIPASS, "lists")
+            if os.path.exists(meipass_lists) and not os.path.exists(local_lists):
+                import shutil
+                try:
+                    shutil.copytree(meipass_lists, local_lists)
+                except Exception:
+                    pass
+            meipass_bat = os.path.join(sys._MEIPASS, "service.bat")
+            local_bat = os.path.join(base_dir, "service.bat")
+            if os.path.exists(meipass_bat) and not os.path.exists(local_bat):
+                import shutil
+                try:
+                    shutil.copy2(meipass_bat, local_bat)
+                except Exception:
+                    pass
+
+        candidates = [
+            local_lists,
+            os.path.join(os.path.dirname(base_dir), "lists"),
+            os.path.join(os.getcwd(), "lists"),
+        ]
+        for c in candidates:
+            if os.path.isdir(c):
+                return c
+        try:
+            os.makedirs(local_lists, exist_ok=True)
+        except Exception:
+            pass
         return local_lists
 
     def reload_lists(self):
@@ -504,7 +630,7 @@ def connect_to_remote(hostname, port, route_via_zapret):
 
 
 class ZapretTVBridge:
-    def __init__(self, host="0.0.0.0", port=8080, tg_port=1443, log_file=None, enable_tg=True):
+    def __init__(self, host="0.0.0.0", port=8080, tg_port=1443, log_file=None, enable_tg=True, base_dir=None):
         self.host = host
         self.port = port
         self.tg_port = tg_port
@@ -513,7 +639,7 @@ class ZapretTVBridge:
         self.enable_tg = enable_tg
         self.running = True
 
-        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.base_dir = base_dir or get_base_dir()
         self.tg_secret = get_or_create_tg_secret(self.base_dir)
         self.filter = SmartRoutingFilter(self.base_dir, log_func=self.log)
 
@@ -692,25 +818,32 @@ class ZapretTVBridge:
             # 2. Supercell MobileConfig Profile for iOS
             if method == "GET" and clean_path in ["/supercell.mobileconfig", "/brawlstars.mobileconfig", "/clashroyale.mobileconfig", "/nullsproxy.mobileconfig"]:
                 profile_path = os.path.join(self.base_dir, "supercell.mobileconfig")
+                prof_data = None
                 if os.path.exists(profile_path):
                     try:
                         with open(profile_path, "rb") as f:
                             prof_data = f.read()
-                        resp = (
-                            b"HTTP/1.1 200 OK\r\n"
-                            b"Content-Type: application/x-apple-aspen-config; charset=utf-8\r\n"
-                            b"Content-Disposition: attachment; filename=\"Supercell_Gaming.mobileconfig\"\r\n"
-                            b"Connection: close\r\n"
-                            + f"Content-Length: {len(prof_data)}\r\n\r\n".encode('ascii')
-                            + prof_data
-                        )
-                        client_sock.sendall(resp)
-                        try: client_sock.shutdown(socket.SHUT_WR)
-                        except Exception: pass
-                        self.log(f"[PROFILE] Выдан игровой профиль Supercell клиенту {client_addr[0]}")
-                        return
-                    except Exception as e:
-                        self.log(f"[ERROR] Не удалось отправить профиль: {e}")
+                    except Exception:
+                        pass
+                if not prof_data:
+                    prof_data = DEFAULT_MOBILECONFIG
+
+                try:
+                    resp = (
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/x-apple-aspen-config; charset=utf-8\r\n"
+                        b"Content-Disposition: attachment; filename=\"Supercell_Gaming.mobileconfig\"\r\n"
+                        b"Connection: close\r\n"
+                        + f"Content-Length: {len(prof_data)}\r\n\r\n".encode('ascii')
+                        + prof_data
+                    )
+                    client_sock.sendall(resp)
+                    try: client_sock.shutdown(socket.SHUT_WR)
+                    except Exception: pass
+                    self.log(f"[PROFILE] Выдан игровой профиль Supercell клиенту {client_addr[0]}")
+                    return
+                except Exception as e:
+                    self.log(f"[ERROR] Не удалось отправить профиль: {e}")
 
             # 3. Favicon request
             if method == "GET" and clean_path == "/favicon.ico":
@@ -1139,34 +1272,78 @@ function copyText(val, btn) {{
         self.log(f"[*] Режим: Умная маршрутизация потокового медиа активна")
 
         # Launch Telegram WS Proxy (Flowseal/tg-ws-proxy)
+        tg_stop_event = None
         tg_proc = None
         if self.enable_tg:
-            tg_dir = os.path.join(self.base_dir, "tg_ws_proxy")
-            if os.path.exists(tg_dir):
-                if not is_port_available(self.tg_port, "0.0.0.0"):
-                    alt_tg = find_available_port(self.tg_port + 1, "0.0.0.0")
-                    if alt_tg:
-                        self.tg_port = alt_tg
+            if not is_port_available(self.tg_port, "0.0.0.0"):
+                alt_tg = find_available_port(self.tg_port + 1, "0.0.0.0")
+                if alt_tg:
+                    self.tg_port = alt_tg
+
+            tg_started = False
+            # 1. In-process asyncio thread (works in standalone exe and script)
+            try:
+                tg_dir = os.path.join(self.base_dir, "tg_ws_proxy")
+                if os.path.isdir(tg_dir) and tg_dir not in sys.path:
+                    sys.path.insert(0, tg_dir)
+                import proxy.tg_ws_proxy as tg_mod
+                from proxy.config import proxy_config, parse_dc_ip_list
+                import asyncio
+
+                proxy_config.host = "0.0.0.0"
+                proxy_config.port = self.tg_port
+                proxy_config.secret = self.tg_secret
+                proxy_config.dc_redirects = parse_dc_ip_list(["2:149.154.167.220", "4:149.154.167.220"])
+                proxy_config.buffer_size = 256 * 1024
+                proxy_config.pool_size = 4
+                proxy_config.fallback_cfproxy = True
+                proxy_config.cfproxy_h2_media = True
+
+                tg_stop_event = asyncio.Event()
+
+                def _tg_loop_runner():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(tg_mod._run(tg_stop_event))
+                    except Exception:
+                        pass
+                    finally:
+                        try: loop.close()
+                        except Exception: pass
+
+                t_tg = threading.Thread(target=_tg_loop_runner, daemon=True, name="TgWsProxyThread")
+                t_tg.start()
+                tg_started = True
+                self.log(f"[*] Telegram WS Proxy запущен на 0.0.0.0:{self.tg_port} (In-Process)")
+                self.log(f"[*] Ссылка для Telegram: tg://proxy?server={self.local_ip}&port={self.tg_port}&secret=dd{self.tg_secret}")
+            except Exception as e:
+                self.log(f"[WARN] In-process tg proxy error: {e}")
+
+            # 2. Subprocess fallback if python executable is available
+            if not tg_started and not getattr(sys, "frozen", False):
                 try:
-                    tg_log = os.path.join(self.base_dir, "tg_proxy.log")
-                    py_bin = sys.executable
-                    if "python.exe" in py_bin.lower():
-                        pyw_candidate = py_bin.lower().replace("python.exe", "pythonw.exe")
-                        if os.path.exists(pyw_candidate):
-                            py_bin = pyw_candidate
-                    tg_cmd = [
-                        py_bin, "-m", "proxy.tg_ws_proxy",
-                        "--host", "0.0.0.0",
-                        "--port", str(self.tg_port),
-                        "--secret", self.tg_secret,
-                        "--dc-ip", "2:149.154.167.220",
-                        "--dc-ip", "4:149.154.167.220",
-                        "--log-file", tg_log
-                    ]
-                    cflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                    tg_proc = subprocess.Popen(tg_cmd, cwd=tg_dir, creationflags=cflags)
-                    self.log(f"[*] Telegram WS Proxy запущен на 0.0.0.0:{self.tg_port} [PID: {tg_proc.pid}]")
-                    self.log(f"[*] Ссылка для Telegram на iPhone: tg://proxy?server={self.local_ip}&port={self.tg_port}&secret=dd{self.tg_secret}")
+                    tg_dir = os.path.join(self.base_dir, "tg_ws_proxy")
+                    if os.path.exists(tg_dir):
+                        tg_log = os.path.join(self.base_dir, "tg_proxy.log")
+                        py_bin = sys.executable
+                        if "python.exe" in py_bin.lower():
+                            pyw_candidate = py_bin.lower().replace("python.exe", "pythonw.exe")
+                            if os.path.exists(pyw_candidate):
+                                py_bin = pyw_candidate
+                        tg_cmd = [
+                            py_bin, "-m", "proxy.tg_ws_proxy",
+                            "--host", "0.0.0.0",
+                            "--port", str(self.tg_port),
+                            "--secret", self.tg_secret,
+                            "--dc-ip", "2:149.154.167.220",
+                            "--dc-ip", "4:149.154.167.220",
+                            "--log-file", tg_log
+                        ]
+                        cflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                        tg_proc = subprocess.Popen(tg_cmd, cwd=tg_dir, creationflags=cflags)
+                        self.log(f"[*] Telegram WS Proxy запущен в подпроцессе на 0.0.0.0:{self.tg_port} [PID: {tg_proc.pid}]")
+                        self.log(f"[*] Ссылка для Telegram: tg://proxy?server={self.local_ip}&port={self.tg_port}&secret=dd{self.tg_secret}")
                 except Exception as e:
                     self.log(f"[WARN] Не удалось запустить Telegram WS Proxy: {e}")
 
@@ -1181,6 +1358,11 @@ function copyText(val, btn) {{
             self.log(f"[ERROR] Ошибка в цикле приема соединений: {e}")
         finally:
             self.running = False
+            if tg_stop_event:
+                try:
+                    tg_stop_event.set()
+                except Exception:
+                    pass
             if tg_proc:
                 try:
                     tg_proc.terminate()
@@ -1199,31 +1381,454 @@ function copyText(val, btn) {{
                 except Exception: pass
 
 
+def cmd_stop(base_dir):
+    """Stops the running bridge process and cleans up files."""
+    pid_file = os.path.join(base_dir, "tv_proxy.pid")
+    ip_file = os.path.join(base_dir, "tv_proxy.ip")
+    stopped = False
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r", encoding="utf-8") as f:
+                pid = int(f.read().strip())
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+            stopped = True
+        except Exception:
+            pass
+        try: os.remove(pid_file)
+        except Exception: pass
+    if os.path.exists(ip_file):
+        try: os.remove(ip_file)
+        except Exception: pass
+
+    # Also kill any orphan pythonw/Zapret processes running zapret_tv_bridge
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command",
+                        "Get-Process | Where-Object { $_.CommandLine -like '*zapret_tv_bridge*--daemon*' } | Stop-Process -Force"],
+                       capture_output=True)
+    except Exception:
+        pass
+
+    print("[+] Zapret TV Bridge успешно остановлен.")
+    return True
+
+
+def cmd_status(base_dir):
+    """Displays current bridge status and client configuration links."""
+    pid_file = os.path.join(base_dir, "tv_proxy.pid")
+    ip_file = os.path.join(base_dir, "tv_proxy.ip")
+    secret_file = os.path.join(base_dir, "tg_secret.txt")
+    is_running = False
+    current_pid = None
+
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r", encoding="utf-8") as f:
+                pid = int(f.read().strip())
+            if is_pid_alive(pid):
+                is_running = True
+                current_pid = pid
+        except Exception:
+            pass
+
+    host_port = "127.0.0.1:8080"
+    if os.path.exists(ip_file):
+        try:
+            with open(ip_file, "r", encoding="utf-8") as f:
+                host_port = f.read().strip()
+        except Exception:
+            pass
+    if ":" in host_port:
+        local_ip, local_port = host_port.split(":", 1)
+    else:
+        local_ip, local_port = get_local_ip(), "8080"
+
+    tg_secret = ""
+    if os.path.exists(secret_file):
+        try:
+            with open(secret_file, "r", encoding="utf-8") as f:
+                tg_secret = f.read().strip()
+        except Exception:
+            pass
+
+    startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
+    startup_enabled = os.path.exists(startup_shortcut)
+
+    print()
+    print("  ==================================================")
+    print("  ZAPRET TV & MOBILE BRIDGE -- СТАТУС СЕРВИСА")
+    print("  ==================================================")
+    if is_running:
+        print(f"  Статус:       АКТИВЕН [PID: {current_pid}]")
+        print(f"  Адрес:        http://{host_port}/")
+        print(f"  PAC URL:      http://{host_port}/proxy.pac")
+        print(f"  Smart TV:     IP {local_ip}  Порт {local_port}")
+        if tg_secret:
+            print(f"  Telegram:     tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
+    else:
+        print("  Статус:       ОСТАНОВЛЕН (Фоновый процесс не запущен)")
+        print(f"  Локальный IP: {local_ip}")
+    print(f"  Автозагрузка: {'[Включена]' if startup_enabled else '[Отключена]'}")
+    print("  --------------------------------------------------")
+    print()
+
+
+def cmd_firewall():
+    """Adds Windows Firewall rules for HTTP proxy (8080) and Telegram (1443)."""
+    print("[*] Настройка Брандмауэра Windows...")
+    cmds = [
+        ["netsh", "advfirewall", "firewall", "add", "rule", "name=Zapret TV Bridge (8080)",
+         "dir=in", "action=allow", "protocol=TCP", "localport=8080", "profile=private,public"],
+        ["netsh", "advfirewall", "firewall", "add", "rule", "name=Zapret TV Bridge Telegram (1443)",
+         "dir=in", "action=allow", "protocol=TCP", "localport=1443", "profile=private,public"]
+    ]
+    for c in cmds:
+        try:
+            subprocess.run(c, capture_output=True)
+        except Exception:
+            pass
+    print("[+] Правила Брандмауэра успешно добавлены (порты 8080 и 1443 открыты для домашней сети).")
+
+
+def cmd_startup(enable, base_dir):
+    """Configures Windows Startup shortcut."""
+    startup_folder = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup")
+    shortcut_path = os.path.join(startup_folder, "Zapret_TV_Bridge.lnk")
+    if not enable:
+        if os.path.exists(shortcut_path):
+            try:
+                os.remove(shortcut_path)
+                print("[+] Ярлык успешно удален из автозагрузки Windows.")
+            except Exception as e:
+                print(f"[ERROR] Не удалось удалить ярлык: {e}")
+        else:
+            print("[i] Ярлык автозагрузки не был установлен.")
+        return
+
+    # Determine target executable
+    if getattr(sys, "frozen", False):
+        target = os.path.abspath(sys.executable)
+        args = "--daemon"
+    else:
+        bat_file = os.path.join(base_dir, "service.bat")
+        if os.path.exists(bat_file):
+            target = "cmd.exe"
+            args = f'/c ""{bat_file}" start"'
+        else:
+            target = sys.executable
+            args = f'"{os.path.abspath(__file__)}" --daemon'
+
+    ps_cmd = (
+        f"$ws = New-Object -ComObject WScript.Shell; "
+        f"$s = $ws.CreateShortcut('{shortcut_path}'); "
+        f"$s.TargetPath = '{target}'; "
+        f"$s.Arguments = '{args}'; "
+        f"$s.WorkingDirectory = '{base_dir}'; "
+        f"$s.Description = 'Zapret TV & Mobile Bridge Background Service'; "
+        f"$s.Save()"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True)
+    if os.path.exists(shortcut_path):
+        print("[+] Служба успешно добавлена в автозагрузку Windows!")
+    else:
+        print("[ERROR] Не удалось создать ярлык автозагрузки.")
+
+
+def cmd_secret(base_dir):
+    """Generates a new 32-character random hex secret for Telegram MTProto."""
+    import secrets
+    new_sec = secrets.token_hex(16).lower()
+    secret_file = os.path.join(base_dir, "tg_secret.txt")
+    try:
+        with open(secret_file, "w", encoding="utf-8") as f:
+            f.write(new_sec)
+    except Exception as e:
+        print(f"[ERROR] Не удалось записать секрет: {e}")
+        return new_sec
+
+    local_ip = get_local_ip()
+    print()
+    print("  [+] Сгенерирован новый 32-значный ключ Telegram MTProto:")
+    print(f"      Секрет: dd{new_sec}")
+    print(f"      Ссылка: tg://proxy?server={local_ip}&port=1443&secret=dd{new_sec}")
+    print("  [i] Перезапустите службу моста (пункт 4), чтобы применить новый ключ.")
+    print()
+    return new_sec
+
+
+def cmd_test():
+    """Performs latency and DoH diagnostics tests."""
+    print()
+    print("  ==================================================")
+    print("  ДИАГНОСТИКА СЕТИ И DNS-OVER-HTTPS (DoH)")
+    print("  ==================================================")
+    targets = [
+        ("Cloudflare DoH (1.1.1.1)", "https://1.1.1.1/dns-query?name=youtube.com&type=A", {"accept": "application/dns-json"}),
+        ("Google DoH (dns.google)", "https://dns.google/resolve?name=youtube.com&type=A", {}),
+        ("Local Gateway / DNS", None, None),
+    ]
+    for name, url, headers in targets:
+        if url:
+            try:
+                t0 = time.time()
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=3.0) as resp:
+                    data = resp.read()
+                latency = (time.time() - t0) * 1000
+                print(f"  [OK] {name:<26}  Задержка: {latency:.1f} мс  (Ответ: {len(data)} байт)")
+            except Exception as e:
+                print(f"  [FAIL] {name:<26} Ошибка: {e}")
+        else:
+            try:
+                t0 = time.time()
+                socket.getaddrinfo("ya.ru", 80)
+                latency = (time.time() - t0) * 1000
+                print(f"  [OK] {name:<26}  Задержка: {latency:.1f} мс")
+            except Exception as e:
+                print(f"  [FAIL] {name:<26} Ошибка: {e}")
+    print("  --------------------------------------------------")
+    print()
+
+
+def cmd_menu(base_dir):
+    """Interactive Zapret-style CMD Menu."""
+    while True:
+        try:
+            os.system("cls" if os.name == "nt" else "clear")
+        except Exception:
+            pass
+
+        pid_file = os.path.join(base_dir, "tv_proxy.pid")
+        ip_file = os.path.join(base_dir, "tv_proxy.ip")
+        secret_file = os.path.join(base_dir, "tg_secret.txt")
+        startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
+
+        is_running = False
+        current_pid = None
+        if os.path.exists(pid_file):
+            try:
+                with open(pid_file, "r", encoding="utf-8") as f:
+                    pid = int(f.read().strip())
+                if is_pid_alive(pid):
+                    is_running = True
+                    current_pid = pid
+            except Exception:
+                pass
+
+        host_port = "127.0.0.1:8080"
+        if os.path.exists(ip_file):
+            try:
+                with open(ip_file, "r", encoding="utf-8") as f:
+                    host_port = f.read().strip()
+            except Exception:
+                pass
+        if ":" in host_port:
+            local_ip, local_port = host_port.split(":", 1)
+        else:
+            local_ip, local_port = get_local_ip(), "8080"
+
+        tg_secret = ""
+        if os.path.exists(secret_file):
+            try:
+                with open(secret_file, "r", encoding="utf-8") as f:
+                    tg_secret = f.read().strip()
+            except Exception:
+                pass
+
+        startup_status = "[enabled]" if os.path.exists(startup_shortcut) else "[disabled]"
+
+        print()
+        print("  ==================================================")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.01")
+        print("  ==================================================")
+        if is_running:
+            print(f"  Status:    [RUNNING] (PID: {current_pid})")
+            print(f"  Address:   http://{host_port}/")
+            print(f"  PAC URL:   http://{host_port}/proxy.pac")
+            print(f"  Smart TV:  IP {local_ip}  Port {local_port}")
+            if tg_secret:
+                print(f"  Telegram:  tg://proxy?server={local_ip}&port=1443&secret=dd{tg_secret}")
+        else:
+            print("  Status:    [STOPPED]")
+            print("  Address:   Не активен")
+        print(f"  Directory: {base_dir}")
+        print("  --------------------------------------------------")
+        print()
+        print("  :: SERVICE")
+        print("     1. Install Service / Firewall Rules")
+        print("     2. Start Bridge (Background)")
+        print("     3. Stop Bridge")
+        print("     4. Restart Bridge")
+        print("     5. Check Status & Connection URLs")
+        print()
+        print("  :: SETTINGS & AUTORUN")
+        print(f"     6. Windows Startup              {startup_status}")
+        print("     7. Generate New Telegram MTProto Key")
+        print("     8. Open Domain Lists Folder")
+        print()
+        print("  :: TOOLS & LOGS")
+        print("     9. Open Web Dashboard in Browser")
+        print("     10. View Live Logs (tv_proxy.log)")
+        print("     11. Run Diagnostics & DoH Latency Test")
+        print()
+        print("  --------------------------------------------------")
+        print("     0. Exit")
+        print("  --------------------------------------------------")
+        print()
+
+        try:
+            choice = input("   Select option (0-11): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            break
+
+        if choice == "0":
+            break
+        elif choice == "1":
+            cmd_firewall()
+            input("\n   Press Enter to return to menu...")
+        elif choice == "2":
+            if is_running:
+                print(f"\n   [i] Bridge already running (PID: {current_pid}).")
+            else:
+                if getattr(sys, "frozen", False):
+                    target_exe = os.path.abspath(sys.executable)
+                    ps_cmd = f"Start-Process '{target_exe}' -ArgumentList '--daemon' -WindowStyle Hidden"
+                    subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd])
+                else:
+                    py_bin = sys.executable
+                    if "python.exe" in py_bin.lower():
+                        pyw = py_bin.lower().replace("python.exe", "pythonw.exe")
+                        if os.path.exists(pyw): py_bin = pyw
+                    cmd = [py_bin, os.path.abspath(__file__), "--daemon"]
+                    cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                    subprocess.Popen(cmd, cwd=base_dir, creationflags=cflags)
+                time.sleep(1.5)
+                print("\n   [+] Фоновая служба успешно запущена!")
+            time.sleep(1)
+        elif choice == "3":
+            cmd_stop(base_dir)
+            time.sleep(1)
+        elif choice == "4":
+            cmd_stop(base_dir)
+            time.sleep(1)
+            if getattr(sys, "frozen", False):
+                target_exe = os.path.abspath(sys.executable)
+                ps_cmd = f"Start-Process '{target_exe}' -ArgumentList '--daemon' -WindowStyle Hidden"
+                subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd])
+            else:
+                py_bin = sys.executable
+                if "python.exe" in py_bin.lower():
+                    pyw = py_bin.lower().replace("python.exe", "pythonw.exe")
+                    if os.path.exists(pyw): py_bin = pyw
+                cmd = [py_bin, os.path.abspath(__file__), "--daemon"]
+                cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                subprocess.Popen(cmd, cwd=base_dir, creationflags=cflags)
+            time.sleep(1.5)
+            print("\n   [+] Служба успешно перезапущена!")
+            time.sleep(1)
+        elif choice == "5":
+            cmd_status(base_dir)
+            input("   Press Enter to return to menu...")
+        elif choice == "6":
+            cmd_startup(not os.path.exists(startup_shortcut), base_dir)
+            input("\n   Press Enter to return to menu...")
+        elif choice == "7":
+            cmd_secret(base_dir)
+            input("   Press Enter to return to menu...")
+        elif choice == "8":
+            lists_dir = os.path.join(base_dir, "lists")
+            if os.path.exists(lists_dir):
+                os.startfile(lists_dir)
+            else:
+                print(f"\n   [i] Lists folder not found at: {lists_dir}")
+                time.sleep(1.5)
+        elif choice == "9":
+            import webbrowser
+            webbrowser.open(f"http://{host_port}/")
+        elif choice == "10":
+            log_path = os.path.join(base_dir, "tv_proxy.log")
+            if os.path.exists(log_path):
+                print(f"\n   [*] Открытие лога в реальном времени (Нажмите Ctrl+C для выхода)...")
+                try:
+                    subprocess.run(["powershell", "-NoProfile", "-Command",
+                                    f"Get-Content -Wait -Tail 30 '{log_path}'"])
+                except KeyboardInterrupt:
+                    pass
+            else:
+                print("\n   [i] Журнал tv_proxy.log пока пуст.")
+                time.sleep(1.5)
+        elif choice == "11":
+            cmd_test()
+            input("   Press Enter to return to menu...")
+
+
 def main():
+    base_dir = get_base_dir()
     parser = argparse.ArgumentParser(description="Zapret TV & Mobile Bridge - Local Network Proxy")
     parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=8080, help="HTTP/PAC Proxy port (default: 8080)")
     parser.add_argument("--tg-port", type=int, default=1443, help="Telegram MTProto port (default: 1443)")
     parser.add_argument("--daemon", action="store_true", help="Run silently as background daemon")
     parser.add_argument("--no-tg", action="store_true", help="Disable Telegram MTProto bridge")
+    parser.add_argument("--menu", action="store_true", help="Launch interactive Zapret-style console manager")
+    parser.add_argument("--status", action="store_true", help="Display bridge status and connection URLs")
+    parser.add_argument("--stop", action="store_true", help="Stop running bridge daemon")
+    parser.add_argument("--restart", action="store_true", help="Restart running bridge daemon")
+    parser.add_argument("--firewall", action="store_true", help="Add Windows Firewall rules")
+    parser.add_argument("--startup-enable", action="store_true", help="Enable Windows Startup")
+    parser.add_argument("--startup-disable", action="store_true", help="Disable Windows Startup")
+    parser.add_argument("--secret", action="store_true", help="Generate a new Telegram secret")
+    parser.add_argument("--test", action="store_true", help="Run network and DoH diagnostics test")
     args = parser.parse_args()
 
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
-    pid_file = os.path.join(cur_dir, "tv_proxy.pid")
-    log_file = os.path.join(cur_dir, "tv_proxy.log")
-    ip_file = os.path.join(cur_dir, "tv_proxy.ip")
+    # Handle standalone CLI commands
+    if args.menu:
+        cmd_menu(base_dir)
+        sys.exit(0)
+    if args.status:
+        cmd_status(base_dir)
+        sys.exit(0)
+    if args.stop:
+        cmd_stop(base_dir)
+        sys.exit(0)
+    if args.restart:
+        cmd_stop(base_dir)
+        time.sleep(1)
+        # Continue to start
+    if args.firewall:
+        cmd_firewall()
+        sys.exit(0)
+    if args.startup_enable:
+        cmd_startup(True, base_dir)
+        sys.exit(0)
+    if args.startup_disable:
+        cmd_startup(False, base_dir)
+        sys.exit(0)
+    if args.secret:
+        cmd_secret(base_dir)
+        sys.exit(0)
+    if args.test:
+        cmd_test()
+        sys.exit(0)
+
+    # If run with no arguments in an interactive console, default to the menu
+    if len(sys.argv) == 1 and sys.stdin and sys.stdin.isatty():
+        cmd_menu(base_dir)
+        sys.exit(0)
+
+    pid_file = os.path.join(base_dir, "tv_proxy.pid")
+    log_file = os.path.join(base_dir, "tv_proxy.log")
+    ip_file = os.path.join(base_dir, "tv_proxy.ip")
 
     if pid_file and os.path.exists(pid_file):
         try:
             with open(pid_file, "r", encoding="utf-8") as f:
                 old_pid = int(f.read().strip())
-            if old_pid != os.getpid():
-                import ctypes
-                h_proc = ctypes.windll.kernel32.OpenProcess(0x1000, False, old_pid)
-                if h_proc:
-                    ctypes.windll.kernel32.CloseHandle(h_proc)
-                    print(f"[*] Zapret TV Bridge уже запущен в фоне (PID: {old_pid})")
-                    sys.exit(0)
+            if old_pid != os.getpid() and is_pid_alive(old_pid):
+                print(f"[*] Zapret TV Bridge уже запущен в фоне (PID: {old_pid})")
+                sys.exit(0)
+            else:
+                try: os.remove(pid_file)
+                except Exception: pass
         except Exception:
             pass
 
@@ -1234,7 +1839,8 @@ def main():
             port=args.port,
             tg_port=args.tg_port,
             log_file=log_file,
-            enable_tg=not args.no_tg
+            enable_tg=not args.no_tg,
+            base_dir=base_dir
         )
         bridge.run(pid_file=pid_file, ip_file=ip_file)
     except Exception as e:
