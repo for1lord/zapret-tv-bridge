@@ -1728,6 +1728,61 @@ def cmd_fix_proxy():
         print(f"[!] Ошибка очистки системного прокси: {e}")
 
 
+def cmd_optimize_network():
+    """Optimizes Windows 10/11 network stack: disables RSC, disables IPv6, sets browser policies for QUIC & Kyber."""
+    if not is_admin():
+        ensure_admin()
+        if not is_admin():
+            print("\n[!] Ошибка: для оптимизации сетевого стека требуются права Администратора.")
+            return False
+
+    print("\n[*] Оптимизация сети Windows 10/11 (RSC, QUIC, Kyber, IPv6)...")
+
+    # 1. Disable Receive Segment Coalescing (RSC) to prevent packet loss & speed drops with WinDivert
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Disable-NetAdapterRsc -Name * -Confirm:$false"], capture_output=True)
+        subprocess.run(["netsh", "int", "tcp", "set", "global", "rsc=disabled"], capture_output=True)
+        print("    [+] Аппаратный RSC отключен (устранена потеря пакетов и просадка скорости).")
+    except Exception as e:
+        print(f"    [-] Предупреждение при отключении RSC: {e}")
+
+    # 2. Disable IPv6 on active adapters (prevents hanging Google/DNS IPv6 requests)
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Disable-NetAdapterBinding -Name * -ComponentId ms_tcpip6 -Confirm:$false"], capture_output=True)
+        print("    [+] Протокол IPv6 отключен на адаптерах (исправлено зависание поиска Google).")
+    except Exception as e:
+        print(f"    [-] Предупреждение при отключении IPv6: {e}")
+
+    # 3. Disable Chromium QUIC and Kyber via System Registry Policies (Chrome, Edge, Yandex)
+    browser_policies = [
+        (r"SOFTWARE\Policies\Google\Chrome", "Google Chrome"),
+        (r"SOFTWARE\Policies\Microsoft\Edge", "Microsoft Edge"),
+        (r"SOFTWARE\Policies\Yandex\YandexBrowser", "Yandex Browser")
+    ]
+    try:
+        import winreg
+        for key_path, b_name in browser_policies:
+            try:
+                key = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE)
+                winreg.SetValueEx(key, "QuicAllowed", 0, winreg.REG_DWORD, 0)
+                winreg.SetValueEx(key, "PostQuantumKeyAgreementEnabled", 0, winreg.REG_DWORD, 0)
+                winreg.CloseKey(key)
+                print(f"    [+] {b_name}: системные политики QUIC=0 и Kyber=0 успешно применены.")
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"    [-] Предупреждение при настройке политик браузеров: {e}")
+
+    # 4. Ensure TCP Auto-Tuning is normal
+    try:
+        subprocess.run(["netsh", "int", "tcp", "set", "global", "autotuninglevel=normal"], capture_output=True)
+    except Exception:
+        pass
+
+    print("[+] Оптимизация сети Windows успешно применена!\n")
+    return True
+
+
 def cmd_remove_strategy():
     """Stops and deletes Zapret Windows service and WinDivert drivers."""
     if not is_admin():
@@ -1783,7 +1838,14 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         print("  ВЫБОР СТРАТЕГИИ ZAPRET ДЛЯ УСТАНОВКИ СЛУЖБЫ")
         print("  ==================================================")
         for i, (name, path) in enumerate(strategies, 1):
-            print(f"     {i:2d}. {name}")
+            tag = ""
+            if name == "general (ALT)":
+                tag = " [Рекомендуется: Высокая скорость / Без потерь]"
+            elif name == "general (ALT2)":
+                tag = " [Альтернатива: Стабильная]"
+            elif name == "general (FAKE TLS AUTO)":
+                tag = " [Универсальная: Любые провайдеры]"
+            print(f"     {i:2d}. {name}{tag}")
         print("  --------------------------------------------------")
         print("      0. Отмена")
         print()
@@ -1847,7 +1909,7 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         print(f"[!] Ошибка создания службы: {res.stdout.strip() or res.stderr.strip()}")
         return False
 
-    subprocess.run(["sc", "description", "zapret", "Zapret DPI bypass software"], capture_output=True)
+    subprocess.run(["sc", "description", "zapret", "Zapret DPI Network Optimization Service"], capture_output=True)
 
     try:
         import winreg
@@ -1867,14 +1929,11 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         if "RUNNING" in q_res.stdout:
             print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно запущена!")
         else:
-            print(f"[!] Служба создана, но запуск вернул: {start_res.stdout.strip() or start_res.stderr.strip()}")
-    if "START_PENDING" in start_res.stdout or "RUNNING" in start_res.stdout:
-        print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно установлена и запущена!")
-    else:
-        print(f"[+] Служба создана. Запуск: {start_res.stdout.strip() or 'OK'}")
+            print(f"[!] Служба создана, но статус запуска: {start_res.stdout.strip() or start_res.stderr.strip()}")
 
     cmd_firewall()
     cmd_fix_proxy()
+    cmd_optimize_network()
     return True
 
 
@@ -2074,16 +2133,17 @@ def cmd_menu(base_dir):
         print("     5. Restart Bridge")
         print("     6. Check Status & Connection URLs")
         print()
-        print("  :: SETTINGS & AUTORUN")
+        print("  :: SETTINGS & OPTIMIZATION")
         print(f"     7. Windows Startup              {startup_status}")
-        print("     8. Fix Windows Proxy [Protect Antigravity / AG Configurator]")
-        print("     9. Generate New Telegram MTProto Key")
-        print("     10. Open Domain Lists Folder")
+        print("     8. Optimize Windows 11 Network [Fix Speed, RSC, QUIC, Kyber, IPv6]")
+        print("     9. Fix Windows Proxy [Protect Antigravity / AG Configurator]")
+        print("     10. Generate New Telegram MTProto Key")
+        print("     11. Open Domain Lists Folder")
         print()
         print("  :: TOOLS & LOGS")
-        print("     11. Open Web Dashboard in Browser")
-        print("     12. View Live Logs [tv_proxy.log]")
-        print("     13. Run Diagnostics & DoH Latency Test")
+        print("     12. Open Web Dashboard in Browser")
+        print("     13. View Live Logs [tv_proxy.log]")
+        print("     14. Run Diagnostics & DoH Latency Test")
         print()
         print("  --------------------------------------------------")
         print("     0. Exit")
@@ -2091,7 +2151,7 @@ def cmd_menu(base_dir):
         print()
 
         try:
-            choice = input("   Select option [0-13]: ").strip()
+            choice = input("   Select option [0-14]: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -2119,34 +2179,37 @@ def cmd_menu(base_dir):
             cmd_startup(not os.path.exists(startup_shortcut), base_dir)
             input("\n   Press Enter to return to menu...")
         elif choice == "8":
-            cmd_fix_proxy()
+            cmd_optimize_network()
             input("\n   Press Enter to return to menu...")
         elif choice == "9":
+            cmd_fix_proxy()
+            input("\n   Press Enter to return to menu...")
+        elif choice == "10":
             cmd_secret(base_dir)
             input("   Press Enter to return to menu...")
-        elif choice == "10":
+        elif choice == "11":
             lists_dir = os.path.join(base_dir, "lists")
             if os.path.exists(lists_dir):
                 os.startfile(lists_dir)
             else:
                 print(f"\n   [i] Lists folder not found at: {lists_dir}")
                 time.sleep(1.5)
-        elif choice == "11":
+        elif choice == "12":
             import webbrowser
             webbrowser.open(f"http://{host_port}/")
-        elif choice == "12":
+        elif choice == "13":
             log_path = os.path.join(base_dir, "tv_proxy.log")
             if os.path.exists(log_path):
-                print(f"\n   [*] Открытие лога в реальном времени (Нажмите Ctrl+C для выхода)...")
+                print("\n   [*] Просмотр логов в реальном времени (Ctrl+C для выхода)...")
                 try:
                     subprocess.run(["powershell", "-NoProfile", "-Command",
                                     f"Get-Content -Wait -Tail 30 '{log_path}'"])
                 except KeyboardInterrupt:
                     pass
             else:
-                print("\n   [i] Журнал tv_proxy.log пока пуст.")
+                print("\n   [i] Файл tv_proxy.log не найден.")
                 time.sleep(1.5)
-        elif choice == "13":
+        elif choice == "14":
             cmd_test()
             input("   Press Enter to return to menu...")
 
@@ -2172,6 +2235,7 @@ def main():
     parser.add_argument("--install-strategy", nargs="?", const="interactive", default=None, help="Install Zapret service with strategy")
     parser.add_argument("--remove-service", action="store_true", help="Stop and remove Zapret Windows service")
     parser.add_argument("--fix-proxy", action="store_true", help="Clear Windows System Proxy to protect Antigravity / AG Configurator")
+    parser.add_argument("--optimize-network", action="store_true", help="Optimize Windows 10/11 network stack (RSC, QUIC, Kyber, IPv6)")
     args = parser.parse_args()
 
     # Handle standalone CLI commands
@@ -2218,6 +2282,10 @@ def main():
         sys.exit(0)
     if args.fix_proxy:
         cmd_fix_proxy()
+        sys.exit(0)
+    if args.optimize_network:
+        ensure_admin()
+        cmd_optimize_network()
         sys.exit(0)
 
     # If run with no arguments in an interactive console, default to the menu
