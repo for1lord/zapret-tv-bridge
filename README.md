@@ -54,7 +54,7 @@ ZAPRET TV & MOBILE BRIDGE MANAGER v1.02
 Адрес шлюза:           http://192.168.0.x:8080/
 PAC URL:               http://192.168.0.x:8080/proxy.pac
 Smart TV:              IP 192.168.0.x  Port 8080
-Папка программы:       D:\projects\zapret-tv-bridge\
+Папка программы:       C:\zapret-tv-bridge\
 --------------------------------------------------
 
 :: УПРАВЛЕНИЕ СЛУЖБАМИ
