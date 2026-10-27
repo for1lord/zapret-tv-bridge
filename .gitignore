@@ -45,6 +45,7 @@ dist/
 .DS_Store
 Thumbs.db
 desktop.ini
+scratch/
 
 ZapretTVBridge.exe
 *.exe

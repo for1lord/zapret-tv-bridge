@@ -10,7 +10,7 @@ Zapret TV & Mobile Bridge — это готовое коробочное реш�
 ## 2. Архитектура и структура файлов
 
 ```text
-D:\projects\zapret-tv-bridge\
+zapret-tv-bridge/
 ├── service.bat               # ЕДИНСТВЕННЫЙ файл в корне для настройки и управления (TUI в стиле Zapret)
 ├── bin\                      # Автономные бинарные файлы (Zero-Python standalone runtime, winws, windivert)
 │   ├── ZapretTVBridge.exe    # Скомпилированное ядро моста со встроенным рантаймом и зависимостями

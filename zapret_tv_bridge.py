@@ -1666,8 +1666,6 @@ def discover_zapret_strategies(base_dir):
     search_dirs = [
         os.path.join(base_dir, "presets"),
         base_dir,
-        r"D:\WINDOWS\zapret-discord-youtube-1.10.4",
-        r"C:\Users\lanze\Documents\antigravity\blissful-shannon"
     ]
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         search_dirs.insert(0, os.path.join(sys._MEIPASS, "presets"))
@@ -1907,8 +1905,6 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
     winws_candidates = [
         os.path.join(base_dir, "bin", "winws.exe"),
         os.path.join(base_dir, "winws.exe"),
-        r"D:\WINDOWS\zapret-discord-youtube-1.10.4\bin\winws.exe",
-        r"C:\Users\lanze\Documents\antigravity\blissful-shannon\bin\winws.exe",
     ]
     winws_exe = None
     for c in winws_candidates:
@@ -1923,7 +1919,8 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
     winws_dir = os.path.dirname(winws_exe)
     lists_dir = os.path.join(base_dir, "lists")
     if not os.path.exists(lists_dir):
-        lists_dir = r"D:\WINDOWS\zapret-discord-youtube-1.10.4\lists"
+        print(f"[!] Папка lists не найдена: {lists_dir}")
+        return False
 
     print(f"\n[*] Применение стратегии: {strategy_name}")
     parsed_args = parse_strategy_args(selected_bat, winws_dir, lists_dir)
