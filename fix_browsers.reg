@@ -1,0 +1,11 @@
+Windows Registry Editor Version 5.00
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge]
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]
+
+[-HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Yandex\YandexBrowser]
+
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings]
+"ProxyEnable"=dword:00000000
+"AutoConfigURL"=-
