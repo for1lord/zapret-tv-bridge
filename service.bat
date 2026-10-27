@@ -115,20 +115,23 @@ if exist "%PID_FILE%" (
 
 set "ZAPRET_RUNNING=0"
 set "ZAPRET_STRATEGY="
-sc query zapret 2>nul | findstr /i "STATE" | findstr /i "RUNNING" >nul
+sc query zapret 2>nul | findstr /i "RUNNING" >nul
 if not errorlevel 1 (
     set "ZAPRET_RUNNING=1"
-    for /f "tokens=2*" %%A in ('reg query "HKLM\System\CurrentControlSet\Services\zapret" /v zapret-discord-youtube 2^>nul') do set "ZAPRET_STRATEGY=%%B"
+) else (
+    tasklist /FI "IMAGENAME eq winws.exe" 2>nul | findstr /i "winws.exe" >nul
+    if not errorlevel 1 set "ZAPRET_RUNNING=1"
 )
 
 if "!ZAPRET_RUNNING!"=="1" (
+    for /f "tokens=2*" %%A in ('reg query "HKLM\System\CurrentControlSet\Services\zapret" /v zapret-discord-youtube 2^>nul') do set "ZAPRET_STRATEGY=%%B"
     if defined ZAPRET_STRATEGY (
         set "ZAPRET_STATUS_STR=[RUNNING - !ZAPRET_STRATEGY!]"
     ) else (
         set "ZAPRET_STATUS_STR=[RUNNING]"
     )
 ) else (
-    sc query zapret 2>nul | findstr /i "zapret" >nul
+    reg query "HKLM\System\CurrentControlSet\Services\zapret" >nul 2>&1
     if not errorlevel 1 (
         set "ZAPRET_STATUS_STR=[STOPPED]"
     ) else (

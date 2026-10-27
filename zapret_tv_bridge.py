@@ -106,6 +106,20 @@ DEFAULT_MOBILECONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
 </plist>'''
 
 
+def pause_menu(prompt="   Нажмите любую клавишу для возврата в меню..."):
+    """Waits for any key press on Windows without requiring Enter."""
+    print(f"\n{prompt}", end="", flush=True)
+    try:
+        import msvcrt
+        msvcrt.getch()
+        print()
+    except Exception:
+        try:
+            input()
+        except Exception:
+            pass
+
+
 def is_admin():
     """Checks whether the process is running with Administrator privileges."""
     try:
@@ -1600,7 +1614,11 @@ def cmd_status(base_dir):
         strat_str = f" [{zapret_strat}]" if zapret_strat else ""
         print(f"  Служба Zapret:  АКТИВНА{strat_str}")
     else:
-        print("  Служба Zapret:  ОСТАНОВЛЕНА / НЕ УСТАНОВЛЕНА")
+        res = subprocess.run("sc query zapret", shell=True, capture_output=True, text=True, errors="ignore")
+        if "1060" in res.stdout or "не установлена" in res.stdout.lower():
+            print("  Служба Zapret:  НЕ УСТАНОВЛЕНА")
+        else:
+            print("  Служба Zapret:  ОСТАНОВЛЕНА")
 
     if is_running:
         print(f"  Мост [Bridge]:  АКТИВЕН [PID: {current_pid}]")
@@ -1618,7 +1636,7 @@ def cmd_status(base_dir):
 
 
 def get_zapret_service_status():
-    """Checks whether the zapret Windows service is currently running."""
+    """Checks whether the zapret Windows service is currently running across all localizations."""
     is_running = False
     strategy = ""
     try:
@@ -1630,9 +1648,13 @@ def get_zapret_service_status():
         except Exception:
             pass
 
-        res = subprocess.run(["sc", "query", "zapret"], capture_output=True, text=True)
-        if "STATE" in res.stdout and "RUNNING" in res.stdout:
+        res = subprocess.run("sc query zapret", shell=True, capture_output=True, text=True, errors="ignore")
+        if "RUNNING" in res.stdout.upper() or ": 4" in res.stdout:
             is_running = True
+        else:
+            t_res = subprocess.run('tasklist /FI "IMAGENAME eq winws.exe"', shell=True, capture_output=True, text=True, errors="ignore")
+            if "winws.exe" in t_res.stdout.lower():
+                is_running = True
     except Exception:
         pass
     return is_running, strategy
@@ -1758,7 +1780,7 @@ def cmd_optimize_network():
     except Exception as e:
         print(f"    [-] Предупреждение при отключении IPv6: {e}")
 
-    # 3. Disable Chromium QUIC and Kyber via System Registry Policies (Chrome, Edge, Yandex)
+    # 3. Disable Chromium QUIC and Kyber + Enable Secure DNS (DoH) via System Registry Policies
     browser_policies = [
         (r"SOFTWARE\Policies\Google\Chrome", "Google Chrome"),
         (r"SOFTWARE\Policies\Microsoft\Edge", "Microsoft Edge"),
@@ -1771,12 +1793,19 @@ def cmd_optimize_network():
                 key = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE)
                 winreg.SetValueEx(key, "QuicAllowed", 0, winreg.REG_DWORD, 0)
                 winreg.SetValueEx(key, "PostQuantumKeyAgreementEnabled", 0, winreg.REG_DWORD, 0)
+                winreg.SetValueEx(key, "DnsOverHttpsMode", 0, winreg.REG_SZ, "automatic")
+                winreg.SetValueEx(key, "DnsOverHttpsTemplates", 0, winreg.REG_SZ, "https://dns.google/dns-query{?dns}")
                 winreg.CloseKey(key)
-                print(f"    [+] {b_name}: системные политики QUIC=0 и Kyber=0 успешно применены.")
+                print(f"    [+] {b_name}: политики QUIC=0, Kyber=0 и Безопасный DNS (DoH) успешно применены.")
             except Exception:
                 pass
     except Exception as e:
         print(f"    [-] Предупреждение при настройке политик браузеров: {e}")
+
+    try:
+        subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+    except Exception:
+        pass
 
     # 4. Ensure TCP Auto-Tuning is normal
     try:
@@ -1907,42 +1936,57 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         print("[!] Не удалось разобрать параметры запуска из выбранного файла стратегии.")
         return False
 
-    subprocess.run(["sc", "stop", "zapret"], capture_output=True)
-    subprocess.run(["sc", "delete", "zapret"], capture_output=True)
-    subprocess.run(["taskkill", "/IM", "winws.exe", "/F"], capture_output=True)
+    subprocess.run("sc stop zapret", shell=True, capture_output=True)
+    subprocess.run("sc delete zapret", shell=True, capture_output=True)
+    subprocess.run("taskkill /IM winws.exe /F", shell=True, capture_output=True)
+    import time
+    time.sleep(1)
 
-    res = subprocess.run([
-        "sc", "create", "zapret",
-        f"binPath= \"{winws_exe}\"",
-        "DisplayName=", "zapret",
-        "start=", "auto"
-    ], capture_output=True, text=True)
+    cmd_sc = f'sc create zapret binPath= "\"{winws_exe}\" {parsed_args}" DisplayName= zapret start= auto'
+    res = subprocess.run(cmd_sc, shell=True, capture_output=True, text=True, errors="ignore")
 
     if res.returncode != 0:
-        print(f"[!] Ошибка создания службы: {res.stdout.strip() or res.stderr.strip()}")
-        return False
+        # Fallback via registry ImagePath
+        res_fb = subprocess.run(f'sc create zapret binPath= "\"{winws_exe}\"" DisplayName= zapret start= auto',
+                                shell=True, capture_output=True, text=True, errors="ignore")
+        if res_fb.returncode == 0:
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_SET_VALUE)
+                winreg.SetValueEx(key, "ImagePath", 0, winreg.REG_EXPAND_SZ, f'"{winws_exe}" {parsed_args}')
+                winreg.SetValueEx(key, "zapret-discord-youtube", 0, winreg.REG_SZ, strategy_name)
+                winreg.CloseKey(key)
+                res = res_fb
+            except Exception as e:
+                print(f"[!] Ошибка записи реестра: {e}")
+                return False
+        else:
+            print(f"[!] Ошибка создания службы через sc: {res.stdout.strip() or res.stderr.strip()}")
+            return False
 
-    subprocess.run(["sc", "description", "zapret", "Zapret DPI Network Optimization Service"], capture_output=True)
+    subprocess.run('sc description zapret "Zapret DPI Network Optimization Service"', shell=True, capture_output=True)
 
     try:
         import winreg
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "ImagePath", 0, winreg.REG_EXPAND_SZ, f'"{winws_exe}" {parsed_args}')
         winreg.SetValueEx(key, "zapret-discord-youtube", 0, winreg.REG_SZ, strategy_name)
         winreg.CloseKey(key)
-    except Exception as e:
-        print(f"[!] Ошибка записи реестра: {e}")
-        return False
+    except Exception:
+        pass
 
-    start_res = subprocess.run(["sc", "start", "zapret"], capture_output=True, text=True)
-    if "START_PENDING" in start_res.stdout or "RUNNING" in start_res.stdout:
+    start_res = subprocess.run("sc start zapret", shell=True, capture_output=True, text=True, errors="ignore")
+    time.sleep(1)
+    q_res = subprocess.run("sc query zapret", shell=True, capture_output=True, text=True, errors="ignore")
+    if "RUNNING" in q_res.stdout.upper() or ": 4" in q_res.stdout:
         print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно установлена и запущена!")
+    elif "START_PENDING" in q_res.stdout.upper() or ": 2" in q_res.stdout:
+        print(f"[+] Служба Zapret со стратегией '{strategy_name}' запускается...")
     else:
-        q_res = subprocess.run(["sc", "query", "zapret"], capture_output=True, text=True)
-        if "RUNNING" in q_res.stdout:
-            print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно запущена!")
+        t_res = subprocess.run('tasklist /FI "IMAGENAME eq winws.exe"', shell=True, capture_output=True, text=True, errors="ignore")
+        if "winws.exe" in t_res.stdout.lower():
+            print(f"[+] Служба Zapret со стратегией '{strategy_name}' успешно запущена (процесс активен)!")
         else:
-            print(f"[!] Служба создана, но статус запуска: {start_res.stdout.strip() or start_res.stderr.strip()}")
+            print(f"[!] Служба создана, но статус запуска: {q_res.stdout.strip() or start_res.stdout.strip()}")
 
     cmd_firewall()
     cmd_fix_proxy()
@@ -2215,16 +2259,16 @@ def cmd_menu(base_dir):
             break
         elif choice == "1":
             cmd_install_all(base_dir)
-            input("\n   Нажмите Enter для возврата в меню...")
+            pause_menu()
         elif choice == "2":
             cmd_remove_all(base_dir)
-            input("\n   Нажмите Enter для возврата в меню...")
+            pause_menu()
         elif choice == "3":
             cmd_status(base_dir)
-            input("   Нажмите Enter для возврата в меню...")
+            pause_menu()
         elif choice == "4":
             cmd_startup(not os.path.exists(startup_shortcut), base_dir)
-            input("\n   Нажмите Enter для возврата в меню...")
+            pause_menu()
         elif choice == "5":
             import webbrowser
             webbrowser.open(f"http://{host_port}/")
