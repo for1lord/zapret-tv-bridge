@@ -1755,66 +1755,61 @@ def cmd_fix_proxy():
         print(f"[!] Ошибка очистки системного прокси: {e}")
 
 
-def cmd_optimize_network():
-    """Optimizes Windows 10/11 network stack: disables RSC, disables IPv6, sets browser policies for QUIC & Kyber."""
-    if not is_admin():
-        ensure_admin()
-        if not is_admin():
-            print("\n[!] Ошибка: для оптимизации сетевого стека требуются права Администратора.")
-            return False
-
-    print("\n[*] Оптимизация сети Windows 10/11 (RSC, QUIC, Kyber, IPv6)...")
-
-    # 1. Disable Receive Segment Coalescing (RSC) to prevent packet loss & speed drops with WinDivert
+def cmd_restore_network_defaults():
+    """Restores factory default Windows network settings, re-enables IPv6 & RSC, and removes forced browser policies."""
+    print("\n[*] Восстановление заводских параметров сети Windows...")
+    # 1. Re-enable IPv6
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", "Disable-NetAdapterRsc -Name * -Confirm:$false"], capture_output=True)
-        subprocess.run(["netsh", "int", "tcp", "set", "global", "rsc=disabled"], capture_output=True)
-        print("    [+] Аппаратный RSC отключен (устранена потеря пакетов и просадка скорости).")
-    except Exception as e:
-        print(f"    [-] Предупреждение при отключении RSC: {e}")
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Enable-NetAdapterBinding -Name * -ComponentId ms_tcpip6 -Confirm:$false"], capture_output=True)
+        print("    [+] Протокол IPv6 включен (заводское состояние).")
+    except Exception:
+        pass
 
-    # 2. Disable IPv6 on active adapters (prevents hanging Google/DNS IPv6 requests)
+    # 2. Re-enable RSC
     try:
-        subprocess.run(["powershell", "-NoProfile", "-Command", "Disable-NetAdapterBinding -Name * -ComponentId ms_tcpip6 -Confirm:$false"], capture_output=True)
-        print("    [+] Протокол IPv6 отключен на адаптерах (исправлено зависание поиска Google).")
-    except Exception as e:
-        print(f"    [-] Предупреждение при отключении IPv6: {e}")
+        subprocess.run(["powershell", "-NoProfile", "-Command", "Enable-NetAdapterRsc -Name * -Confirm:$false"], capture_output=True)
+        subprocess.run(["netsh", "int", "tcp", "set", "global", "rsc=enabled"], capture_output=True)
+        print("    [+] Режим RSC включен (заводское состояние).")
+    except Exception:
+        pass
 
-    # 3. Disable Chromium QUIC and Kyber + Enable Secure DNS (DoH) via System Registry Policies
+    # 3. Clean up all forced browser policies
     browser_policies = [
         (r"SOFTWARE\Policies\Google\Chrome", "Google Chrome"),
         (r"SOFTWARE\Policies\Microsoft\Edge", "Microsoft Edge"),
         (r"SOFTWARE\Policies\Yandex\YandexBrowser", "Yandex Browser")
     ]
+    vals_to_delete = ["DnsOverHttpsMode", "DnsOverHttpsTemplates", "ProxyMode", "QuicAllowed", "PostQuantumKeyAgreementEnabled"]
     try:
         import winreg
         for key_path, b_name in browser_policies:
             try:
-                key = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE)
-                winreg.SetValueEx(key, "QuicAllowed", 0, winreg.REG_DWORD, 0)
-                winreg.SetValueEx(key, "PostQuantumKeyAgreementEnabled", 0, winreg.REG_DWORD, 0)
-                winreg.SetValueEx(key, "DnsOverHttpsMode", 0, winreg.REG_SZ, "automatic")
-                winreg.SetValueEx(key, "DnsOverHttpsTemplates", 0, winreg.REG_SZ, "https://dns.google/dns-query{?dns}")
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE)
+                for val in vals_to_delete:
+                    try:
+                        winreg.DeleteValue(key, val)
+                    except Exception:
+                        pass
                 winreg.CloseKey(key)
-                print(f"    [+] {b_name}: политики QUIC=0, Kyber=0 и Безопасный DNS (DoH) успешно применены.")
+                print(f"    [+] {b_name}: политики очищены, стандартный DNS и прокси восстановлены.")
             except Exception:
                 pass
-    except Exception as e:
-        print(f"    [-] Предупреждение при настройке политик браузеров: {e}")
+    except Exception:
+        pass
 
+    # 4. Flush DNS
     try:
         subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
     except Exception:
         pass
 
-    # 4. Ensure TCP Auto-Tuning is normal
-    try:
-        subprocess.run(["netsh", "int", "tcp", "set", "global", "autotuninglevel=normal"], capture_output=True)
-    except Exception:
-        pass
-
-    print("[+] Оптимизация сети Windows успешно применена!\n")
+    print("[+] Заводские параметры сети Windows успешно восстановлены!\n")
     return True
+
+
+def cmd_optimize_network():
+    """Alias for backwards compatibility: restores clean default network state."""
+    return cmd_restore_network_defaults()
 
 
 def cmd_remove_strategy():
@@ -2038,7 +2033,7 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
 
     cmd_firewall()
     cmd_fix_proxy()
-    cmd_optimize_network()
+    cmd_restore_network_defaults()
     return True
 
 
@@ -2188,7 +2183,7 @@ def cmd_install_all(base_dir, chosen_strategy=None):
     print("  [+] ВСЕ СЛУЖБЫ УСПЕШНО УСТАНОВЛЕНЫ И ЗАПУЩЕНЫ!")
     print("  ==================================================")
     print("  1. Служба Zapret активна с выбранной стратегией.")
-    print("  2. Сеть Windows оптимизирована (RSC отключен, QUIC/Kyber настроены).")
+    print("  2. Сеть Windows в заводском режиме (политики браузеров и DNS не блокируются).")
     print("  3. Локальный шлюз для ТВ и мобильных устройств работает.")
     print("  4. Среды разработки защищены (системный прокси отключен).")
     print("  --------------------------------------------------\n")
@@ -2408,7 +2403,7 @@ def main():
         sys.exit(0)
     if args.optimize_network:
         ensure_admin()
-        cmd_optimize_network()
+        cmd_restore_network_defaults()
         sys.exit(0)
     if args.wintun_start:
         cmd_wintun_start(base_dir)
