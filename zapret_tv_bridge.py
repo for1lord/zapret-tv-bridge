@@ -1946,7 +1946,7 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
 
     service_created = False
 
-    # 2. Try native WinAPI CreateServiceW (zero cmd quoting issues)
+    # 2. Try native WinAPI CreateServiceW with explicit 64-bit argtypes & restype
     try:
         import ctypes
         from ctypes import wintypes
@@ -1956,6 +1956,22 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         SERVICE_WIN32_OWN_PROCESS = 0x00000010
         SERVICE_AUTO_START = 0x00000002
         SERVICE_ERROR_NORMAL = 0x00000001
+
+        advapi32.OpenSCManagerW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+        advapi32.OpenSCManagerW.restype = wintypes.HANDLE
+        advapi32.OpenServiceW.argtypes = [wintypes.HANDLE, wintypes.LPCWSTR, wintypes.DWORD]
+        advapi32.OpenServiceW.restype = wintypes.HANDLE
+        advapi32.CreateServiceW.argtypes = [
+            wintypes.HANDLE, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.LPCWSTR,
+            wintypes.LPCWSTR, ctypes.c_void_p, wintypes.LPCWSTR, wintypes.LPCWSTR,
+            wintypes.LPCWSTR
+        ]
+        advapi32.CreateServiceW.restype = wintypes.HANDLE
+        advapi32.DeleteService.argtypes = [wintypes.HANDLE]
+        advapi32.DeleteService.restype = wintypes.BOOL
+        advapi32.CloseServiceHandle.argtypes = [wintypes.HANDLE]
+        advapi32.CloseServiceHandle.restype = wintypes.BOOL
 
         h_scm = advapi32.OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
         if h_scm:
@@ -1978,22 +1994,24 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
     except Exception:
         pass
 
-    # 3. Fallback: sc.exe create without complex quotes, then update ImagePath
+    # 3. Fallback: sc create with clean unquoted path via shell
     if not service_created:
-        sc_res = subprocess.run(["sc.exe", "create", "zapret", "binPath= %SystemRoot%\\System32\\cmd.exe", "DisplayName= zapret", "start= auto"],
-                                capture_output=True, text=True, errors="ignore")
+        sc_cmd = 'sc create zapret binPath= "%SystemRoot%\\System32\\cmd.exe" DisplayName= zapret start= auto'
+        sc_res = subprocess.run(sc_cmd, shell=True, capture_output=True, text=True, errors="ignore")
         if sc_res.returncode == 0 or "already exists" in sc_res.stdout.lower() or "уже существует" in sc_res.stdout.lower():
             service_created = True
 
-    # 4. Set/Ensure exact ImagePath, strategy, and description in Registry
+    # 4. Set/Ensure exact ImagePath, strategy, and description in Registry using CreateKeyEx
     try:
         import winreg
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_SET_VALUE)
+        key = winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_SET_VALUE)
         winreg.SetValueEx(key, "ImagePath", 0, winreg.REG_EXPAND_SZ, full_bin_path)
         winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, "zapret")
         winreg.SetValueEx(key, "Description", 0, winreg.REG_SZ, "Zapret DPI Network Optimization Service")
         winreg.SetValueEx(key, "zapret-discord-youtube", 0, winreg.REG_SZ, strategy_name)
         winreg.SetValueEx(key, "Start", 0, winreg.REG_DWORD, 2)
+        winreg.SetValueEx(key, "Type", 0, winreg.REG_DWORD, 0x10)
+        winreg.SetValueEx(key, "ErrorControl", 0, winreg.REG_DWORD, 1)
         winreg.CloseKey(key)
         service_created = True
     except Exception as e:
