@@ -8,6 +8,7 @@ files_to_pack = [
     ("ZapretTVBridge.exe", "ZapretTVBridge.exe"),
     ("service.bat", "service.bat"),
     ("restore_network_defaults.bat", "restore_network_defaults.bat"),
+    ("stop_old_services.bat", "stop_old_services.bat"),
     ("fix_browsers.reg", "fix_browsers.reg"),
     ("wintun_gateway.py", "wintun_gateway.py"),
     ("README.md", "README.md"),
