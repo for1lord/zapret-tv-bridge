@@ -1657,28 +1657,29 @@ def discover_zapret_strategies(base_dir):
             if candidates:
                 def strategy_sort_key(p):
                     name = os.path.splitext(os.path.basename(p))[0].strip()
-                    if name.lower() == "general":
-                        return (0, 0, "")
-                    if name.lower() == "general (alt)":
+                    name_l = name.lower()
+                    if name_l == "general (alt)":
                         return (1, 1, "")
-                    m_alt = re.match(r"general \(alt(\d+)\)", name, re.IGNORECASE)
+                    m_alt = re.match(r"^general \(alt(\d+)\)$", name_l)
                     if m_alt:
                         return (1, int(m_alt.group(1)), "")
-                    if "exp" in name.lower():
-                        return (2, 0, name.lower())
-                    if "fake tls auto" in name.lower():
+                    if name_l == "general":
+                        return (2, 0, "")
+                    if "exp" in name_l:
+                        return (3, 0, name_l)
+                    if "fake tls auto" in name_l:
                         sub = 0
-                        if "alt" in name.lower():
-                            m_sub = re.search(r"alt(\d*)", name.lower())
-                            sub = int(m_sub.group(1)) if m_sub and m_sub.group(1) else 1
-                        return (3, sub, name.lower())
-                    if "simple fake" in name.lower():
+                        m_sub = re.search(r"alt(\d*)", name_l)
+                        if m_sub:
+                            sub = int(m_sub.group(1)) if m_sub.group(1) else 1
+                        return (4, sub, name_l)
+                    if "simple fake" in name_l:
                         sub = 0
-                        if "alt" in name.lower():
-                            m_sub = re.search(r"alt(\d*)", name.lower())
-                            sub = int(m_sub.group(1)) if m_sub and m_sub.group(1) else 1
-                        return (4, sub, name.lower())
-                    return (5, 0, name.lower())
+                        m_sub = re.search(r"alt(\d*)", name_l)
+                        if m_sub:
+                            sub = int(m_sub.group(1)) if m_sub.group(1) else 1
+                        return (5, sub, name_l)
+                    return (6, 0, name_l)
 
                 candidates.sort(key=strategy_sort_key)
                 return [(os.path.splitext(os.path.basename(b))[0], b) for b in candidates]
@@ -1832,8 +1833,13 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
             if 0 <= idx < len(strategies):
                 strategy_name, selected_bat = strategies[idx]
         else:
+            clean_strategy = str(chosen_strategy).strip().lower()
             for s_name, s_path in strategies:
-                if s_name.lower() == str(chosen_strategy).lower() or os.path.basename(s_path).lower() == str(chosen_strategy).lower():
+                s_lower = s_name.lower()
+                if (clean_strategy == s_lower or 
+                    clean_strategy == os.path.splitext(os.path.basename(s_path))[0].lower() or
+                    s_lower == f"general ({clean_strategy})" or
+                    s_lower.replace(" ", "") == f"general({clean_strategy})"):
                     strategy_name, selected_bat = s_name, s_path
                     break
 
@@ -1842,14 +1848,7 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         print("  ВЫБОР СТРАТЕГИИ ZAPRET ДЛЯ УСТАНОВКИ СЛУЖБЫ")
         print("  ==================================================")
         for i, (name, path) in enumerate(strategies, 1):
-            tag = ""
-            if name == "general (ALT)":
-                tag = " [Рекомендуется: Высокая скорость / Без потерь]"
-            elif name == "general (ALT2)":
-                tag = " [Альтернатива: Стабильная]"
-            elif name == "general (FAKE TLS AUTO)":
-                tag = " [Универсальная: Любые провайдеры]"
-            print(f"     {i:2d}. {name}{tag}")
+            print(f"     {i:2d}. {name}")
         print("  --------------------------------------------------")
         print("      0. Отмена")
         print()
@@ -1868,8 +1867,18 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
                 print("[!] Неверный номер стратегии.")
                 return False
         else:
-            print("[!] Неверный ввод.")
-            return False
+            clean_choice = choice.strip().lower()
+            for s_name, s_path in strategies:
+                s_lower = s_name.lower()
+                if (clean_choice == s_lower or 
+                    clean_choice == os.path.splitext(os.path.basename(s_path))[0].lower() or
+                    s_lower == f"general ({clean_choice})" or
+                    s_lower.replace(" ", "") == f"general({clean_choice})"):
+                    strategy_name, selected_bat = s_name, s_path
+                    break
+            if not selected_bat:
+                print("[!] Неверный ввод.")
+                return False
 
     winws_candidates = [
         os.path.join(base_dir, "bin", "winws.exe"),
