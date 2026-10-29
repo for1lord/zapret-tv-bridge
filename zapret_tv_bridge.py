@@ -2366,7 +2366,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.02")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.03")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
