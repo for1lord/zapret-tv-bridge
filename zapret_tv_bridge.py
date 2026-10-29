@@ -1385,9 +1385,15 @@ function copyText(val, btn) {{
             tg_started = False
             # 1. In-process asyncio thread (works in standalone exe and script)
             try:
-                tg_dir = os.path.join(self.base_dir, "tg_ws_proxy")
-                if os.path.isdir(tg_dir) and tg_dir not in sys.path:
-                    sys.path.insert(0, tg_dir)
+                tg_candidates = [
+                    os.path.join(self.base_dir, "tg_ws_proxy"),
+                ]
+                if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                    tg_candidates.insert(0, sys._MEIPASS)
+                    tg_candidates.insert(0, os.path.join(sys._MEIPASS, "tg_ws_proxy"))
+                for c in tg_candidates:
+                    if os.path.isdir(c) and c not in sys.path:
+                        sys.path.insert(0, c)
                 import proxy.tg_ws_proxy as tg_mod
                 from proxy.config import proxy_config, parse_dc_ip_list
                 import asyncio
@@ -2366,7 +2372,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.03")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.04")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
