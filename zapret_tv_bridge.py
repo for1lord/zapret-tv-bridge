@@ -2121,7 +2121,13 @@ def cmd_startup(enable, base_dir):
     """Configures complete Windows Startup for both Zapret service and Bridge."""
     startup_folder = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup")
     shortcut_path = os.path.join(startup_folder, "Zapret_TV_Bridge.lnk")
-    vbs_path = os.path.join(base_dir, "bridge_autostart.vbs")
+    local_appdata = os.path.expandvars(r"%LOCALAPPDATA%\ZapretTVBridge")
+    try:
+        os.makedirs(local_appdata, exist_ok=True)
+    except Exception:
+        pass
+    vbs_path = os.path.join(local_appdata, "bridge_autostart.vbs")
+    local_vbs_in_repo = os.path.join(base_dir, "bridge_autostart.vbs")
 
     if not enable:
         # 1. Remove scheduled task
@@ -2132,12 +2138,13 @@ def cmd_startup(enable, base_dir):
                 os.remove(shortcut_path)
             except Exception:
                 pass
-        # 3. Remove vbs launcher
-        if os.path.exists(vbs_path):
-            try:
-                os.remove(vbs_path)
-            except Exception:
-                pass
+        # 3. Remove vbs launchers
+        for p in [vbs_path, local_vbs_in_repo]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
         print("[+] Автозагрузка Windows отключена.")
         return
 
@@ -2149,27 +2156,38 @@ def cmd_startup(enable, base_dir):
     except Exception:
         pass
 
-    # 2. Create bridge_autostart.vbs for silent, windowless background launch of both services
+    # Clean any legacy startup shortcut to prevent duplicate launches
+    if os.path.exists(shortcut_path):
+        try:
+            os.remove(shortcut_path)
+        except Exception:
+            pass
+
+    # 2. Create bridge_autostart.vbs in persistent %LOCALAPPDATA%\ZapretTVBridge
+    # Protected with FolderExists check so that if the program folder is moved or deleted,
+    # it exits silently without throwing any "File not found" dialogs.
+    norm_base = os.path.abspath(base_dir).rstrip("\\")
     vbs_lines = [
-        '\' Zapret TV & Mobile Bridge — Silent AutoStart Launcher',
-        'Option Explicit',
-        'Dim fso, shell, curDir',
+        "' Zapret TV & Mobile Bridge -- Silent AutoStart Launcher",
+        "Option Explicit",
+        "Dim fso, shell, curDir",
         'Set fso = CreateObject("Scripting.FileSystemObject")',
         'Set shell = CreateObject("WScript.Shell")',
-        'curDir = fso.GetParentFolderName(WScript.ScriptFullName)',
-        'shell.CurrentDirectory = curDir',
-        '\' 1. Ensure zapret service is started',
-        'On Error Resume Next',
+        f'curDir = "{norm_base}"',
+        "If Not fso.FolderExists(curDir) Then WScript.Quit",
+        "shell.CurrentDirectory = curDir",
+        "' 1. Ensure zapret service is started",
+        "On Error Resume Next",
         'shell.Run "cmd.exe /c sc start zapret", 0, False',
-        '\' 2. Launch Bridge daemon',
+        "' 2. Launch Bridge daemon",
         'If fso.FileExists(curDir & "\\bin\\ZapretTVBridge.exe") Then',
         '    shell.Run """" & curDir & "\\bin\\ZapretTVBridge.exe"" --daemon", 0, False',
         'ElseIf fso.FileExists(curDir & "\\ZapretTVBridge.exe") Then',
         '    shell.Run """" & curDir & "\\ZapretTVBridge.exe"" --daemon", 0, False',
-        'Else',
+        'ElseIf fso.FileExists(curDir & "\\zapret_tv_bridge.py") Then',
         '    shell.Run "pythonw.exe """ & curDir & "\\zapret_tv_bridge.py"" --daemon", 0, False',
-        'End If',
-        ''
+        "End If",
+        ""
     ]
     try:
         with open(vbs_path, "w", encoding="utf-8") as f:
@@ -2184,25 +2202,12 @@ def cmd_startup(enable, base_dir):
     except Exception:
         pass
 
-    # 4. Create standard Startup Shortcut as dependable backup
-    ps_cmd = (
-        f"$ws = New-Object -ComObject WScript.Shell; "
-        f"$s = $ws.CreateShortcut('{shortcut_path}'); "
-        f"$s.TargetPath = 'wscript.exe'; "
-        f"$s.Arguments = '\"{vbs_path}\"'; "
-        f"$s.WorkingDirectory = '{base_dir}'; "
-        f"$s.Description = 'Zapret TV & Mobile Bridge Background Service'; "
-        f"$s.Save()"
-    )
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True)
-
-    # 5. Immediately ensure both services are active right now
+    # 4. Immediately ensure both services are active right now
     ensure_zapret_service_running()
     cmd_start(base_dir)
 
     print("[+] Все службы успешно добавлены в автозагрузку Windows!")
     print("    При включении ПК автоматически запускаются и служба Zapret, и шлюз для ТВ.\n")
-
 
 def cmd_secret(base_dir):
     """Generates a new 32-character random hex secret for Telegram MTProto."""
@@ -2372,7 +2377,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.04")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.05")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")

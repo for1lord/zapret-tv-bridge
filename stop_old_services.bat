@@ -52,10 +52,12 @@ echo [+] Виртуальные интерфейсы и маршруты очи�
 
 echo.
 echo [*] 5. Удаление старой версии из автозагрузки Windows...
+schtasks /delete /tn "Zapret_TV_Bridge" /f >nul 2>&1
 del /f /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk" >nul 2>&1
 del /f /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\*zapret*.lnk" >nul 2>&1
 del /f /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\*bridge*.lnk" >nul 2>&1
-echo [+] Ярлыки автозагрузки удалены.
+del /f /q "%LOCALAPPDATA%\ZapretTVBridge\bridge_autostart.vbs" >nul 2>&1
+echo [+] Задачи планировщика и ярлыки автозагрузки удалены.
 
 echo.
 echo [*] 6. Сброс системного прокси и очистка политик браузеров...
