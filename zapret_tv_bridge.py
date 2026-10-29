@@ -1662,7 +1662,7 @@ def cmd_restart(base_dir):
 
 
 def cmd_stop(base_dir):
-    """Stops the running bridge process and cleans up files."""
+    """Stops all running bridge processes and cleans up files."""
     pid_file = os.path.join(base_dir, "tv_proxy.pid")
     ip_file = os.path.join(base_dir, "tv_proxy.ip")
     stopped = False
@@ -1680,13 +1680,19 @@ def cmd_stop(base_dir):
         try: os.remove(ip_file)
         except Exception: pass
 
-    # Also kill any orphan pythonw/Zapret processes running zapret_tv_bridge
-    try:
-        subprocess.run(["powershell", "-NoProfile", "-Command",
-                        "Get-Process | Where-Object { $_.CommandLine -like '*zapret_tv_bridge*--daemon*' } | Stop-Process -Force"],
-                       capture_output=True)
-    except Exception:
-        pass
+    # Terminate any other ZapretTVBridge instances except current process
+    curr_pid = os.getpid()
+    if os.name == "nt":
+        try:
+            ps_cmd = (
+                f"$procs = Get-CimInstance Win32_Process | Where-Object {{ "
+                f"($_.Name -like '*ZapretTVBridge*' -or $_.CommandLine -like '*zapret_tv_bridge*') "
+                f"-and $_.ProcessId -ne {curr_pid} }}; "
+                f"foreach ($p in $procs) {{ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }}"
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True)
+        except Exception:
+            pass
 
     print("[+] Zapret TV Bridge успешно остановлен.")
     return True
@@ -2489,7 +2495,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.07")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.08")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
