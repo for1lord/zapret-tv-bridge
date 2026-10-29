@@ -8,46 +8,59 @@
             <key>DNSSettings</key>
             <dict>
                 <key>DNSProtocol</key>
-                <string>TLS</string>
-                <key>ServerAddresses</key>
-                <array>
-                    <string>45.139.239.54</string>
-                    <string>45.139.239.56</string>
-                    <string>185.175.46.137</string>
-                    <string>141.95.97.120</string>
-                    <string>185.211.245.131</string>
-                </array>
-                <key>ServerName</key>
-                <string>dns.nullsproxy.com</string>
+                <string>HTTPS</string>
+                <key>ServerURL</key>
+                <string>https://dns.comss.one/dns-query</string>
             </dict>
+            <key>OnDemandRules</key>
+            <array>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>WiFi</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>Cellular</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Disconnect</string>
+                </dict>
+            </array>
             <key>PayloadDescription</key>
-            <string>Оптимизация DNS-маршрутизации для Brawl Stars и Clash Royale</string>
+            <string>Настройка DNS over HTTPS для прямого подключения в Brawl Stars, Clash Royale и Clash of Clans</string>
             <key>PayloadDisplayName</key>
-            <string>NullsProxy Gaming DNS (Brawl Stars &amp; Clash Royale)</string>
+            <string>COMSS Gaming DNS (Brawl Stars &amp; Clash Royale)</string>
             <key>PayloadIdentifier</key>
-            <string>com.nullsproxy.dns.settings</string>
+            <string>com.apple.dnsSettings.managed.comss.gaming</string>
             <key>PayloadType</key>
             <string>com.apple.dnsSettings.managed</string>
             <key>PayloadUUID</key>
-            <string>A5E3F812-4B67-4C90-8D3E-9F1234567890</string>
+            <string>C5B28A14-9E3F-4D78-812C-3A0F56B7D891</string>
             <key>PayloadVersion</key>
             <integer>1</integer>
+            <key>ProhibitDisablement</key>
+            <false/>
         </dict>
     </array>
     <key>PayloadDescription</key>
-    <string>Настройка DNS для стабильного подключения в играх Supercell (Brawl Stars, Clash Royale, Clash of Clans)</string>
+    <string>Игровой DNS-профиль для подключения в Clash Royale, Brawl Stars и Clash of Clans</string>
     <key>PayloadDisplayName</key>
-    <string>Supercell Gaming DNS Profile (Brawl Stars / Clash Royale)</string>
+    <string>Supercell Gaming DNS (Clash Royale / Brawl Stars)</string>
     <key>PayloadIdentifier</key>
-    <string>com.nullsproxy.dns.profile</string>
+    <string>com.supercell.gaming.dns.profile</string>
     <key>PayloadOrganization</key>
-    <string>NullsProxy</string>
+    <string>COMSS.ONE</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
     <string>Configuration</string>
     <key>PayloadUUID</key>
-    <string>B7F4E923-5C78-4D01-9E4F-0123456789AB</string>
+    <string>F721A0C9-5D83-4E61-B91A-82E054C137F4</string>
     <key>PayloadVersion</key>
     <integer>1</integer>
 </dict>

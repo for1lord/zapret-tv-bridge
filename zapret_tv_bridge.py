@@ -60,30 +60,43 @@ DEFAULT_MOBILECONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
             <key>DNSSettings</key>
             <dict>
                 <key>DNSProtocol</key>
-                <string>TLS</string>
-                <key>ServerAddresses</key>
-                <array>
-                    <string>45.139.239.54</string>
-                    <string>45.139.239.56</string>
-                    <string>185.175.46.137</string>
-                    <string>141.95.97.120</string>
-                    <string>185.211.245.131</string>
-                </array>
-                <key>ServerName</key>
-                <string>dns.nullsproxy.com</string>
+                <string>HTTPS</string>
+                <key>ServerURL</key>
+                <string>https://dns.comss.one/dns-query</string>
             </dict>
+            <key>OnDemandRules</key>
+            <array>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>WiFi</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>Cellular</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Disconnect</string>
+                </dict>
+            </array>
             <key>PayloadDescription</key>
-            <string>DNS routing for Supercell games</string>
+            <string>DNS over HTTPS for Supercell games (Brawl Stars, Clash Royale)</string>
             <key>PayloadDisplayName</key>
-            <string>NullsProxy Gaming DNS (Brawl Stars &amp; Clash Royale)</string>
+            <string>COMSS Gaming DNS (Brawl Stars &amp; Clash Royale)</string>
             <key>PayloadIdentifier</key>
-            <string>com.nullsproxy.dns.settings</string>
+            <string>com.apple.dnsSettings.managed.comss.gaming</string>
             <key>PayloadType</key>
             <string>com.apple.dnsSettings.managed</string>
             <key>PayloadUUID</key>
-            <string>A5E3F812-4B67-4C90-8D3E-9F1234567890</string>
+            <string>C5B28A14-9E3F-4D78-812C-3A0F56B7D891</string>
             <key>PayloadVersion</key>
             <integer>1</integer>
+            <key>ProhibitDisablement</key>
+            <false/>
         </dict>
     </array>
     <key>PayloadDescription</key>
@@ -91,15 +104,83 @@ DEFAULT_MOBILECONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
     <key>PayloadDisplayName</key>
     <string>Supercell Gaming DNS Profile</string>
     <key>PayloadIdentifier</key>
-    <string>com.nullsproxy.dns.profile</string>
+    <string>com.supercell.gaming.dns.profile</string>
     <key>PayloadOrganization</key>
-    <string>NullsProxy</string>
+    <string>COMSS.ONE</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
     <string>Configuration</string>
     <key>PayloadUUID</key>
-    <string>B7F4E923-5C78-4D01-9E4F-0123456789AB</string>
+    <string>F721A0C9-5D83-4E61-B91A-82E054C137F4</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>'''
+
+DEFAULT_NULLS_MOBILECONFIG = b'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>TLS</string>
+                <key>ServerName</key>
+                <string>dns.nullsproxy.com</string>
+            </dict>
+            <key>OnDemandRules</key>
+            <array>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>WiFi</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>Cellular</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Disconnect</string>
+                </dict>
+            </array>
+            <key>PayloadDescription</key>
+            <string>Null's Proxy DNS over TLS for Supercell games</string>
+            <key>PayloadDisplayName</key>
+            <string>Null's Proxy Gaming DNS (DoT)</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.dnsSettings.managed.nullsproxy.gaming</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>B21CE26F-66C9-42DF-873E-B7D3A2865539</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>ProhibitDisablement</key>
+            <false/>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Null's Proxy DNS Profile</string>
+    <key>PayloadDisplayName</key>
+    <string>Null's Proxy DNS Profile</string>
+    <key>PayloadIdentifier</key>
+    <string>com.nullsproxy.dns.profile</string>
+    <key>PayloadOrganization</key>
+    <string>Null's Team</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>9CBFD31C-60F3-47CA-B1EA-C74895BA64DB</string>
     <key>PayloadVersion</key>
     <integer>1</integer>
 </dict>
@@ -906,16 +987,15 @@ class ZapretTVBridge:
                 self.log(f"[PAC] Выдан PAC-скрипт клиенту {client_addr[0]}")
                 return
 
-            # 2. Supercell MobileConfig Profile for iOS
-            if method == "GET" and clean_path in ["/supercell.mobileconfig", "/brawlstars.mobileconfig", "/clashroyale.mobileconfig", "/nullsproxy.mobileconfig"]:
+            # 2. Supercell MobileConfig Profiles for iOS (COMSS DoH & Null's DoT)
+            if method == "GET" and clean_path in ["/supercell.mobileconfig", "/brawlstars.mobileconfig", "/clashroyale.mobileconfig", "/comss.mobileconfig"]:
                 profile_path = os.path.join(self.base_dir, "supercell.mobileconfig")
                 prof_data = None
                 if os.path.exists(profile_path):
                     try:
                         with open(profile_path, "rb") as f:
                             prof_data = f.read()
-                    except Exception:
-                        pass
+                    except Exception: pass
                 if not prof_data:
                     prof_data = DEFAULT_MOBILECONFIG
 
@@ -923,7 +1003,7 @@ class ZapretTVBridge:
                     resp = (
                         b"HTTP/1.1 200 OK\r\n"
                         b"Content-Type: application/x-apple-aspen-config; charset=utf-8\r\n"
-                        b"Content-Disposition: attachment; filename=\"Supercell_Gaming.mobileconfig\"\r\n"
+                        b"Content-Disposition: attachment; filename=\"Supercell_Gaming_COMSS.mobileconfig\"\r\n"
                         b"Connection: close\r\n"
                         + f"Content-Length: {len(prof_data)}\r\n\r\n".encode('ascii')
                         + prof_data
@@ -931,7 +1011,35 @@ class ZapretTVBridge:
                     client_sock.sendall(resp)
                     try: client_sock.shutdown(socket.SHUT_WR)
                     except Exception: pass
-                    self.log(f"[PROFILE] Выдан игровой профиль Supercell клиенту {client_addr[0]}")
+                    self.log(f"[PROFILE] Выдан игровой профиль COMSS Supercell клиенту {client_addr[0]}")
+                    return
+                except Exception as e:
+                    self.log(f"[ERROR] Не удалось отправить профиль: {e}")
+
+            if method == "GET" and clean_path == "/nullsproxy.mobileconfig":
+                profile_path = os.path.join(self.base_dir, "nullsproxy.mobileconfig")
+                prof_data = None
+                if os.path.exists(profile_path):
+                    try:
+                        with open(profile_path, "rb") as f:
+                            prof_data = f.read()
+                    except Exception: pass
+                if not prof_data:
+                    prof_data = DEFAULT_NULLS_MOBILECONFIG
+
+                try:
+                    resp = (
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/x-apple-aspen-config; charset=utf-8\r\n"
+                        b"Content-Disposition: attachment; filename=\"NullsProxy_Gaming.mobileconfig\"\r\n"
+                        b"Connection: close\r\n"
+                        + f"Content-Length: {len(prof_data)}\r\n\r\n".encode('ascii')
+                        + prof_data
+                    )
+                    client_sock.sendall(resp)
+                    try: client_sock.shutdown(socket.SHUT_WR)
+                    except Exception: pass
+                    self.log(f"[PROFILE] Выдан игровой профиль Null's Proxy клиенту {client_addr[0]}")
                     return
                 except Exception as e:
                     self.log(f"[ERROR] Не удалось отправить профиль: {e}")
@@ -1177,12 +1285,16 @@ function copyText(val, btn) {{
     <!-- Section 4: Supercell Gaming Profile -->
     <div class="section">
       <div class="section-title">4. Brawl Stars & Clash Royale (DNS-профиль)</div>
-      <p class="info-text">Для оптимального прямого подключения на iOS скачайте игровой сетевой профиль:</p>
+      <p class="info-text">Для прямого подключения игр Supercell на iOS скачайте игровой DNS-профиль:</p>
       <div class="btn-group">
-        <a class="btn" href="/supercell.mobileconfig">Скачать профиль для iOS</a>
+        <a class="btn" href="/supercell.mobileconfig">📥 Профиль COMSS (Рекомендуется: DoH)</a>
+        <a class="btn" href="/nullsproxy.mobileconfig" style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2);">📥 Null's Proxy (DoT)</a>
       </div>
       <p class="info-text" style="font-size: 12px; margin-top: 8px;">
-        После загрузки: <em>Настройки -> Профиль загружен -> Установить</em>.
+        После загрузки в Safari: <em>Настройки -&gt; Профиль загружен -&gt; Установить</em>.
+      </p>
+      <p class="info-text" style="font-size: 11px; color: #a0aec0; margin-top: 4px; line-height: 1.4;">
+        💡 <b>Подсказка для Clash Royale:</b> если полоса зависает на «Обновление 50%», включите любой VPN на 1 минуту, дайте игре скачать файлы обновления до 100%, затем выключите VPN. Дальше игра будет запускаться напрямую через DNS-профиль.
       </p>
     </div>
 
@@ -2377,7 +2489,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.06")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.07")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")

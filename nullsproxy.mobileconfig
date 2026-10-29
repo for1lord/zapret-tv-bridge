@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>TLS</string>
+                <key>ServerName</key>
+                <string>dns.nullsproxy.com</string>
+            </dict>
+            <key>OnDemandRules</key>
+            <array>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>WiFi</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Connect</string>
+                    <key>InterfaceTypeMatch</key>
+                    <string>Cellular</string>
+                </dict>
+                <dict>
+                    <key>Action</key>
+                    <string>Disconnect</string>
+                </dict>
+            </array>
+            <key>PayloadDescription</key>
+            <string>Настройка DNS over TLS (Null's Proxy) для Supercell игр</string>
+            <key>PayloadDisplayName</key>
+            <string>Null's Proxy Gaming DNS (DoT)</string>
+            <key>PayloadIdentifier</key>
+            <string>com.apple.dnsSettings.managed.nullsproxy.gaming</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>B21CE26F-66C9-42DF-873E-B7D3A2865539</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>ProhibitDisablement</key>
+            <false/>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Официальный профиль Null's Proxy для Supercell игр</string>
+    <key>PayloadDisplayName</key>
+    <string>Null's Proxy DNS (Brawl Stars)</string>
+    <key>PayloadIdentifier</key>
+    <string>com.nullsproxy.dns.profile</string>
+    <key>PayloadOrganization</key>
+    <string>Null's Team</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>9CBFD31C-60F3-47CA-B1EA-C74895BA64DB</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
