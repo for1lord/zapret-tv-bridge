@@ -49,7 +49,7 @@ if /i "%CLI_CMD%"=="admin" set "CLI_CMD=%~2"
 if /i "%CLI_CMD%"=="install" goto :opt_install_all
 if /i "%CLI_CMD%"=="remove" goto :opt_remove_all
 if /i "%CLI_CMD%"=="status" goto :opt_status
-if /i "%CLI_CMD%"=="start" goto :opt_install_all
+if /i "%CLI_CMD%"=="start" goto :opt_start_all
 if /i "%CLI_CMD%"=="stop" goto :opt_remove_all
 
 :menu_loop
@@ -150,6 +150,8 @@ for /f "tokens=1,2 delims=:" %%a in ("!HOST_PORT!") do (
 
 set "STARTUP_STATUS=[disabled]"
 if exist "%SHORTCUT_PATH%" set "STARTUP_STATUS=[enabled]"
+schtasks /query /tn "Zapret_TV_Bridge" >nul 2>&1
+if not errorlevel 1 set "STARTUP_STATUS=[enabled]"
 exit /b
 
 :: -----------------------------------------------------------------------------
@@ -202,7 +204,7 @@ goto :menu_loop
 :: -----------------------------------------------------------------------------
 :opt_startup
 cls
-if exist "%SHORTCUT_PATH%" (
+if "!STARTUP_STATUS!"=="[enabled]" (
     if "!USE_STANDALONE!"=="1" (
         "%BRIDGE_EXE%" --startup-disable
     ) else (
@@ -227,4 +229,21 @@ goto :menu_loop
 call :refresh_status
 start "" "http://!HOST_PORT!/"
 if defined CLI_CMD exit /b
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: START ALL SERVICES IN BACKGROUND
+:: -----------------------------------------------------------------------------
+:opt_start_all
+cls
+echo [*] Запуск всех служб в фоновом режиме...
+sc start zapret >nul 2>&1
+if "!USE_STANDALONE!"=="1" (
+    powershell -NoProfile -Command "Start-Process '%BRIDGE_EXE%' -ArgumentList '--daemon' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden"
+) else (
+    start /b "" "%PY_BIN%" "%PROJECT_DIR%zapret_tv_bridge.py" --daemon
+)
+if defined CLI_CMD exit /b
+echo [+] Все службы успешно запущены.
+timeout /t 2 >nul
 goto :menu_loop

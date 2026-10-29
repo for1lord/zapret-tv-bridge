@@ -1362,6 +1362,17 @@ function copyText(val, btn) {{
         self.log(f"[*] PAC автоконфигурация: http://{self.local_ip}:{self.port}/proxy.pac")
         self.log(f"[*] Режим: Умная маршрутизация потокового медиа активна")
 
+        # Ensure Zapret service is active and start boot watchdog
+        ensure_zapret_service_running()
+        def _zapret_boot_watchdog():
+            for _ in range(10):
+                time.sleep(3)
+                is_r, _ = get_zapret_service_status()
+                if not is_r:
+                    ensure_zapret_service_running()
+        t_wd = threading.Thread(target=_zapret_boot_watchdog, daemon=True, name="ZapretWatchdog")
+        t_wd.start()
+
         # Launch Telegram WS Proxy (Flowseal/tg-ws-proxy)
         tg_stop_event = None
         tg_proc = None
@@ -1601,8 +1612,7 @@ def cmd_status(base_dir):
         except Exception:
             pass
 
-    startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
-    startup_enabled = os.path.exists(startup_shortcut)
+    startup_enabled = is_startup_enabled()
 
     zapret_running, zapret_strat = get_zapret_service_status()
 
@@ -1658,6 +1668,47 @@ def get_zapret_service_status():
     except Exception:
         pass
     return is_running, strategy
+
+
+def ensure_zapret_service_running():
+    """Checks if the zapret service is installed, and starts it if it is stopped."""
+    try:
+        import winreg
+        has_service = False
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"System\CurrentControlSet\Services\zapret", 0, winreg.KEY_READ)
+            winreg.CloseKey(key)
+            has_service = True
+        except Exception:
+            pass
+
+        if not has_service:
+            return False
+
+        is_running, _ = get_zapret_service_status()
+        if is_running:
+            return True
+
+        subprocess.run("sc start zapret", shell=True, capture_output=True)
+        time.sleep(1)
+        is_running, _ = get_zapret_service_status()
+        return is_running
+    except Exception:
+        return False
+
+
+def is_startup_enabled():
+    """Checks whether autostart is enabled via Startup shortcut or Task Scheduler."""
+    startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
+    if os.path.exists(startup_shortcut):
+        return True
+    try:
+        res = subprocess.run('schtasks /query /tn "Zapret_TV_Bridge"', shell=True, capture_output=True, text=True, errors="ignore")
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def discover_zapret_strategies(base_dir):
@@ -1780,18 +1831,22 @@ def cmd_restore_network_defaults():
     vals_to_delete = ["DnsOverHttpsMode", "DnsOverHttpsTemplates", "ProxyMode", "QuicAllowed", "PostQuantumKeyAgreementEnabled"]
     try:
         import winreg
-        for key_path, b_name in browser_policies:
-            try:
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE)
-                for val in vals_to_delete:
-                    try:
-                        winreg.DeleteValue(key, val)
-                    except Exception:
-                        pass
-                winreg.CloseKey(key)
-                print(f"    [+] {b_name}: политики очищены, стандартный DNS и прокси восстановлены.")
-            except Exception:
-                pass
+        for hive, hive_name in ((winreg.HKEY_LOCAL_MACHINE, "HKLM"), (winreg.HKEY_CURRENT_USER, "HKCU")):
+            for key_path, b_name in browser_policies:
+                try:
+                    key = winreg.OpenKey(hive, key_path, 0, winreg.KEY_SET_VALUE)
+                    removed = 0
+                    for val in vals_to_delete:
+                        try:
+                            winreg.DeleteValue(key, val)
+                            removed += 1
+                        except Exception:
+                            pass
+                    winreg.CloseKey(key)
+                    if removed:
+                        print(f"    [+] {b_name} ({hive_name}): удалено политик: {removed}, стандартный DNS и прокси восстановлены.")
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -2006,6 +2061,11 @@ def cmd_install_strategy(base_dir, chosen_strategy=None):
         winreg.SetValueEx(key, "ErrorControl", 0, winreg.REG_DWORD, 1)
         winreg.CloseKey(key)
         service_created = True
+        try:
+            subprocess.run("sc config zapret depend= BFE/Tcpip", shell=True, capture_output=True)
+            subprocess.run('sc failure zapret reset= 86400 actions= restart/2000/restart/5000//', shell=True, capture_output=True)
+        except Exception:
+            pass
     except Exception as e:
         print(f"[!] Ошибка настройки реестра службы: {e}")
         return False
@@ -2052,47 +2112,90 @@ def cmd_firewall():
 
 
 def cmd_startup(enable, base_dir):
-    """Configures Windows Startup shortcut."""
+    """Configures complete Windows Startup for both Zapret service and Bridge."""
     startup_folder = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup")
     shortcut_path = os.path.join(startup_folder, "Zapret_TV_Bridge.lnk")
+    vbs_path = os.path.join(base_dir, "bridge_autostart.vbs")
+
     if not enable:
+        # 1. Remove scheduled task
+        subprocess.run('schtasks /delete /tn "Zapret_TV_Bridge" /f', shell=True, capture_output=True)
+        # 2. Remove shortcut
         if os.path.exists(shortcut_path):
             try:
                 os.remove(shortcut_path)
-                print("[+] Ярлык успешно удален из автозагрузки Windows.")
-            except Exception as e:
-                print(f"[ERROR] Не удалось удалить ярлык: {e}")
-        else:
-            print("[i] Ярлык автозагрузки не был установлен.")
+            except Exception:
+                pass
+        # 3. Remove vbs launcher
+        if os.path.exists(vbs_path):
+            try:
+                os.remove(vbs_path)
+            except Exception:
+                pass
+        print("[+] Автозагрузка Windows отключена.")
         return
 
-    # Determine target executable
-    if getattr(sys, "frozen", False):
-        target = os.path.abspath(sys.executable)
-        args = "--daemon"
-    else:
-        bat_file = os.path.join(base_dir, "service.bat")
-        if os.path.exists(bat_file):
-            target = "cmd.exe"
-            args = f'/c ""{bat_file}" start"'
-        else:
-            target = sys.executable
-            args = f'"{os.path.abspath(__file__)}" --daemon'
+    # 1. Ensure Zapret Windows service (if installed) is configured for AUTO start
+    try:
+        subprocess.run("sc config zapret start= auto", shell=True, capture_output=True)
+        subprocess.run("sc config zapret depend= BFE/Tcpip", shell=True, capture_output=True)
+        subprocess.run('sc failure zapret reset= 86400 actions= restart/2000/restart/5000//', shell=True, capture_output=True)
+    except Exception:
+        pass
 
+    # 2. Create bridge_autostart.vbs for silent, windowless background launch of both services
+    vbs_lines = [
+        '\' Zapret TV & Mobile Bridge — Silent AutoStart Launcher',
+        'Option Explicit',
+        'Dim fso, shell, curDir',
+        'Set fso = CreateObject("Scripting.FileSystemObject")',
+        'Set shell = CreateObject("WScript.Shell")',
+        'curDir = fso.GetParentFolderName(WScript.ScriptFullName)',
+        'shell.CurrentDirectory = curDir',
+        '\' 1. Ensure zapret service is started',
+        'On Error Resume Next',
+        'shell.Run "cmd.exe /c sc start zapret", 0, False',
+        '\' 2. Launch Bridge daemon',
+        'If fso.FileExists(curDir & "\\bin\\ZapretTVBridge.exe") Then',
+        '    shell.Run """" & curDir & "\\bin\\ZapretTVBridge.exe"" --daemon", 0, False',
+        'ElseIf fso.FileExists(curDir & "\\ZapretTVBridge.exe") Then',
+        '    shell.Run """" & curDir & "\\ZapretTVBridge.exe"" --daemon", 0, False',
+        'Else',
+        '    shell.Run "pythonw.exe """ & curDir & "\\zapret_tv_bridge.py"" --daemon", 0, False',
+        'End If',
+        ''
+    ]
+    try:
+        with open(vbs_path, "w", encoding="utf-8") as f:
+            f.write("\r\n".join(vbs_lines))
+    except Exception as e:
+        print(f"[!] Предупреждение создания vbs-лаунчера: {e}")
+
+    # 3. Create/Update Scheduled Task (Runs with HIGHEST admin privileges at logon without UAC prompt)
+    try:
+        sch_cmd = f'schtasks /create /tn "Zapret_TV_Bridge" /tr "wscript.exe \\"{vbs_path}\\"" /sc onlogon /rl highest /f'
+        subprocess.run(sch_cmd, shell=True, capture_output=True, text=True, errors="ignore")
+    except Exception:
+        pass
+
+    # 4. Create standard Startup Shortcut as dependable backup
     ps_cmd = (
         f"$ws = New-Object -ComObject WScript.Shell; "
         f"$s = $ws.CreateShortcut('{shortcut_path}'); "
-        f"$s.TargetPath = '{target}'; "
-        f"$s.Arguments = '{args}'; "
+        f"$s.TargetPath = 'wscript.exe'; "
+        f"$s.Arguments = '\"{vbs_path}\"'; "
         f"$s.WorkingDirectory = '{base_dir}'; "
         f"$s.Description = 'Zapret TV & Mobile Bridge Background Service'; "
         f"$s.Save()"
     )
     subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True)
-    if os.path.exists(shortcut_path):
-        print("[+] Служба успешно добавлена в автозагрузку Windows!")
-    else:
-        print("[ERROR] Не удалось создать ярлык автозагрузки.")
+
+    # 5. Immediately ensure both services are active right now
+    ensure_zapret_service_running()
+    cmd_start(base_dir)
+
+    print("[+] Все службы успешно добавлены в автозагрузку Windows!")
+    print("    При включении ПК автоматически запускаются и служба Zapret, и шлюз для ТВ.\n")
 
 
 def cmd_secret(base_dir):
@@ -2219,7 +2322,7 @@ def cmd_menu(base_dir):
         pid_file = os.path.join(base_dir, "tv_proxy.pid")
         ip_file = os.path.join(base_dir, "tv_proxy.ip")
         secret_file = os.path.join(base_dir, "tg_secret.txt")
-        startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
+        startup_enabled = is_startup_enabled()
 
         is_running = False
         current_pid = None
@@ -2253,7 +2356,7 @@ def cmd_menu(base_dir):
             except Exception:
                 pass
 
-        startup_status = "[enabled]" if os.path.exists(startup_shortcut) else "[disabled]"
+        startup_status = "[enabled]" if startup_enabled else "[disabled]"
 
         zapret_running, zapret_strat = get_zapret_service_status()
         if zapret_running:
@@ -2307,7 +2410,7 @@ def cmd_menu(base_dir):
             cmd_status(base_dir)
             pause_menu()
         elif choice == "4":
-            cmd_startup(not os.path.exists(startup_shortcut), base_dir)
+            cmd_startup(not startup_enabled, base_dir)
             pause_menu()
         elif choice == "5":
             import webbrowser

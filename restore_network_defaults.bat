@@ -21,6 +21,9 @@ echo [*] 1. Удаление принудительных политик бра�
 reg delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /f >nul 2>&1
 reg delete "HKLM\SOFTWARE\Policies\Google\Chrome" /f >nul 2>&1
 reg delete "HKLM\SOFTWARE\Policies\Yandex\YandexBrowser" /f >nul 2>&1
+reg delete "HKCU\SOFTWARE\Policies\Microsoft\Edge" /f >nul 2>&1
+reg delete "HKCU\SOFTWARE\Policies\Google\Chrome" /f >nul 2>&1
+reg delete "HKCU\SOFTWARE\Policies\Yandex\YandexBrowser" /f >nul 2>&1
 echo [+] Политики браузеров успешно удалены.
 
 echo.
