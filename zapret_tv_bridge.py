@@ -430,7 +430,7 @@ class SmartRoutingFilter:
                 if sub in self.exclude_domains:
                     return False, "excluded_direct"
 
-        # Antigravity IDE & AI Developer Tools (AGUnlocker / AG_2.26.0) -> ALWAYS DIRECT
+        # Developer & Cloud Services -> ALWAYS DIRECT
         if any(h in host for h in [
             "cloudcode-pa.googleapis.com",
             "daily-cloudcode-pa.googleapis.com",
@@ -445,7 +445,7 @@ class SmartRoutingFilter:
             "anthropic.com",
             "claude.ai",
         ]):
-            return False, "ai_antigravity_direct"
+            return False, "dev_services_direct"
 
         # Apple core services -> DIRECT
         if any(h in host for h in ["apple.com", "mzstatic.com", "icloud.com", "itunes.com", "aaplimg.com", "akadns.net"]):
@@ -765,7 +765,7 @@ class ZapretTVBridge:
         return proxy;
     }}
 
-    // Antigravity IDE & AI Developer Tools (AGUnlocker) -> ALWAYS DIRECT
+    // Developer & Cloud Services -> ALWAYS DIRECT
     if (shExpMatch(hostLower, "*cloudcode-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*googleapis.com*") ||
         shExpMatch(hostLower, "*google.com*") ||
@@ -1799,7 +1799,7 @@ def parse_strategy_args(bat_path, bin_dir, lists_dir):
 
 
 def cmd_fix_proxy():
-    """Ensures Windows System Proxy is cleared to protect Antigravity IDE and AG Configurator."""
+    """Ensures Windows System Proxy is cleared for direct system connection."""
     try:
         subprocess.run(["reg", "delete", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
                         "/v", "AutoConfigURL", "/f"], capture_output=True)
@@ -2377,7 +2377,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.05")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.06")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
@@ -2450,7 +2450,7 @@ def main():
     parser.add_argument("--remove-all", action="store_true", help="Stop and remove Zapret service and Bridge")
     parser.add_argument("--install-strategy", nargs="?", const="interactive", default=None, help="Install Zapret service with strategy")
     parser.add_argument("--remove-service", action="store_true", help="Stop and remove Zapret Windows service")
-    parser.add_argument("--fix-proxy", action="store_true", help="Clear Windows System Proxy to protect Antigravity / AG Configurator")
+    parser.add_argument("--fix-proxy", action="store_true", help="Clear Windows System Proxy for direct system connection")
     parser.add_argument("--optimize-network", action="store_true", help="Optimize Windows 10/11 network stack (RSC, QUIC, Kyber, IPv6)")
     parser.add_argument("--wintun-start", action="store_true", help="Start Wintun L3 Gateway with Split Tunneling")
     parser.add_argument("--wintun-stop", action="store_true", help="Stop Wintun L3 Gateway and restore routes")

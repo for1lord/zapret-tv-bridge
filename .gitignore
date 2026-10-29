@@ -49,3 +49,8 @@ scratch/
 
 ZapretTVBridge.exe
 *.exe
+
+# AI and assistant metadata
+GEMINI.md
+*.gemini*
+.gemini/
