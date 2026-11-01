@@ -28,7 +28,7 @@ if errorlevel 1 goto :main_init
 exit /b
 
 :main_init
-title ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.08
+title ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.09
 
 :: Locate executable or python environment
 set "BRIDGE_EXE=%PROJECT_DIR%bin\ZapretTVBridge.exe"
@@ -58,7 +58,7 @@ cls
 
 echo.
 echo   ==================================================
-echo   ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.08
+echo   ZAPRET TV ^& MOBILE BRIDGE MANAGER v1.09
 echo   ==================================================
 echo   Служба Zapret:         !ZAPRET_STATUS_STR!
 echo   Шлюз для ТВ/Мобильных: !STATUS_STR!
