@@ -504,7 +504,19 @@ class SmartRoutingFilter:
 
         parts = host.split(".")
 
-        # 0. Check Zapret Exclude Lists (list-exclude.txt: Yandex, VK, Gosuslugi, Sberbank, etc.)
+        # 1. Media & Streaming services (prioritized routing through Zapret)
+        if "googlevideo" in host or "youtube" in host or "ytimg" in host or "ggpht" in host or "youtu.be" in host:
+            return True, "youtube"
+        if any(host.startswith(p) for p in ["game.clashroyaleapp.com", "game.brawlstarsgame.com", "game.clashofclans.com", "game.squadbustersgame.com"]):
+            return True, "supercell_game"
+        if "discord" in host or "discordapp" in host or "discord.gg" in host or "storage.googleapis.com" in host:
+            return True, "discord"
+        if any(m in host for m in ["instagram", "cdninstagram", "fbcdn", "facebook", "threads", "ig.me", "meta.com", "fbsbx"]):
+            return True, "meta_media"
+        if "twitter" in host or "twimg" in host or host == "x.com" or host.endswith(".x.com"):
+            return True, "twitter_x"
+
+        # 2. Check Zapret Exclude Lists (list-exclude.txt: Yandex, VK, Gosuslugi, Sberbank, etc.)
         with self.lock:
             for i in range(len(parts) - 1):
                 sub = ".".join(parts[i:])
@@ -515,7 +527,6 @@ class SmartRoutingFilter:
         if any(h in host for h in [
             "cloudcode-pa.googleapis.com",
             "daily-cloudcode-pa.googleapis.com",
-            "googleapis.com",
             "google.com",
             "gstatic.com",
             "gvt1.com",
@@ -536,18 +547,6 @@ class SmartRoutingFilter:
         if any(h in host for h in ["supercell.com", "supercellid.com", "clashroyaleapp.com", "brawlstarsgame.com", "clashroyale.com"]):
             if not any(host.startswith(p) for p in ["game.clashroyaleapp.com", "game.brawlstarsgame.com", "game.clashofclans.com", "game.squadbustersgame.com"]):
                 return False, "supercell_web_direct"
-
-        # 1. Media & Streaming services -> Route through Zapret
-        if "googlevideo" in host or "youtube" in host or "ytimg" in host or "ggpht" in host or "youtu.be" in host:
-            return True, "youtube"
-        if any(host.startswith(p) for p in ["game.clashroyaleapp.com", "game.brawlstarsgame.com", "game.clashofclans.com", "game.squadbustersgame.com"]):
-            return True, "supercell_game"
-        if "discord" in host or "discordapp" in host or "discord.gg" in host:
-            return True, "discord"
-        if any(m in host for m in ["instagram", "cdninstagram", "fbcdn", "facebook", "threads", "ig.me", "meta.com", "fbsbx"]):
-            return True, "meta_media"
-        if "twitter" in host or "twimg" in host or host == "x.com" or host.endswith(".x.com"):
-            return True, "twitter_x"
 
         # 2. Check Zapret hostlists (list-general.txt / list-general-user.txt)
         with self.lock:
@@ -831,7 +830,7 @@ class ZapretTVBridge:
         return "DIRECT";
     }}
 
-    // Media & Social Platforms
+    // Media & Social Platforms (including Discord uploads & storage)
     if (shExpMatch(hostLower, "*instagram*") ||
         shExpMatch(hostLower, "*cdninstagram*") ||
         shExpMatch(hostLower, "*fbcdn*") ||
@@ -841,6 +840,8 @@ class ZapretTVBridge:
         shExpMatch(hostLower, "*ig.me*") ||
         shExpMatch(hostLower, "*fbsbx*") ||
         shExpMatch(hostLower, "*discord*") ||
+        shExpMatch(hostLower, "*discordapp*") ||
+        shExpMatch(hostLower, "*storage.googleapis.com*") ||
         shExpMatch(hostLower, "*twitter*") ||
         shExpMatch(hostLower, "*x.com*")) {{
         return proxy;
@@ -848,7 +849,7 @@ class ZapretTVBridge:
 
     // Developer & Cloud Services -> ALWAYS DIRECT
     if (shExpMatch(hostLower, "*cloudcode-pa.googleapis.com*") ||
-        shExpMatch(hostLower, "*googleapis.com*") ||
+        shExpMatch(hostLower, "*daily-cloudcode-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*google.com*") ||
         shExpMatch(hostLower, "*gstatic.com*") ||
         shExpMatch(hostLower, "*gvt1.com*") ||
@@ -977,6 +978,9 @@ class ZapretTVBridge:
                 resp = (
                     b"HTTP/1.1 200 OK\r\n"
                     b"Content-Type: application/x-ns-proxy-autoconfig; charset=utf-8\r\n"
+                    b"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                    b"Pragma: no-cache\r\n"
+                    b"Expires: 0\r\n"
                     b"Connection: close\r\n"
                     + f"Content-Length: {len(pac_content)}\r\n\r\n".encode('ascii')
                     + pac_content
@@ -2495,7 +2499,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.10")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.11")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
