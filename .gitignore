@@ -54,3 +54,8 @@ ZapretTVBridge.exe
 GEMINI.md
 *.gemini*
 .gemini/
+
+# Rust build artifacts
+target/
+**/target/
+routing_rules.bin
