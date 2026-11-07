@@ -528,8 +528,7 @@ class SmartRoutingFilter:
             "cloudcode-pa.googleapis.com",
             "daily-cloudcode-pa.googleapis.com",
             "google.com",
-            "gstatic.com",
-            "gvt1.com",
+                        "gvt1.com",
             "geohide.ru",
             "dns-ai.ru",
             "chatgpt.com",
@@ -818,7 +817,11 @@ class ZapretTVBridge:
         shExpMatch(hostLower, "*youtube.com*") ||
         shExpMatch(hostLower, "*ytimg.com*") ||
         shExpMatch(hostLower, "*ggpht.com*") ||
-        shExpMatch(hostLower, "*youtu.be*")) {{
+        shExpMatch(hostLower, "*youtu.be*") ||
+                shExpMatch(hostLower, "*gstatic.com*") ||
+        shExpMatch(hostLower, "*youtubei.googleapis.com*") ||
+        shExpMatch(hostLower, "*fonts.googleapis.com*") ||
+        shExpMatch(hostLower, "*jnn-pa.googleapis.com*")) {{
         return proxy;
     }}
 
@@ -851,8 +854,7 @@ class ZapretTVBridge:
     if (shExpMatch(hostLower, "*cloudcode-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*daily-cloudcode-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*google.com*") ||
-        shExpMatch(hostLower, "*gstatic.com*") ||
-        shExpMatch(hostLower, "*gvt1.com*") ||
+                shExpMatch(hostLower, "*gvt1.com*") ||
         shExpMatch(hostLower, "*chatgpt.com*") ||
         shExpMatch(hostLower, "*openai.com*") ||
         shExpMatch(hostLower, "*anthropic.com*") ||

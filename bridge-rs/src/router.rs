@@ -1129,7 +1129,6 @@ impl SmartRouter {
         const DEV_SERVICES: &[&str] = &[
             "cloudcode-pa.googleapis.com",
             "daily-cloudcode-pa.googleapis.com",
-            "gstatic.com",
             "gvt1.com",
             "geohide.ru",
             "dns-ai.ru",
@@ -1166,6 +1165,10 @@ impl SmartRouter {
             || domain_str.contains("ytimg")
             || domain_str.contains("ggpht")
             || domain_str.contains("youtu.be")
+            || domain_str.contains("gstatic.com")
+            || domain_str.contains("youtubei.googleapis.com")
+            || domain_str.contains("fonts.googleapis.com")
+            || domain_str.contains("jnn-pa.googleapis.com")
         {
             return (true, "target_routed");
         }

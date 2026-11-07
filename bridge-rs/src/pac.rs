@@ -17,6 +17,10 @@ r#"function FindProxyForURL(url, host) {{
         shExpMatch(hostLower, "*ytimg.com*") ||
         shExpMatch(hostLower, "*ggpht.com*") ||
         shExpMatch(hostLower, "*youtu.be*") ||
+        shExpMatch(hostLower, "*gstatic.com*") ||
+        shExpMatch(hostLower, "*youtubei.googleapis.com*") ||
+        shExpMatch(hostLower, "*fonts.googleapis.com*") ||
+        shExpMatch(hostLower, "*jnn-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*twitch.tv*") ||
         shExpMatch(hostLower, "*ttvnw.net*")) {{
         return proxy;
@@ -51,7 +55,6 @@ r#"function FindProxyForURL(url, host) {{
     if (shExpMatch(hostLower, "*cloudcode-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*daily-cloudcode-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*google.com*") ||
-        shExpMatch(hostLower, "*gstatic.com*") ||
         shExpMatch(hostLower, "*gvt1.com*") ||
         shExpMatch(hostLower, "*chatgpt.com*") ||
         shExpMatch(hostLower, "*openai.com*") ||
