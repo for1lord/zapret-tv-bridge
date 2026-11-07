@@ -150,6 +150,11 @@ for /f "tokens=1,2 delims=:" %%a in ("!HOST_PORT!") do (
 
 set "STARTUP_STATUS=[disabled]"
 if exist "%SHORTCUT_PATH%" set "STARTUP_STATUS=[enabled]"
+if exist "%STARTUP_FOLDER%\Zapret_TV_Bridge.vbs" set "STARTUP_STATUS=[enabled]"
+reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "ZapretTVBridge" >nul 2>&1
+if not errorlevel 1 set "STARTUP_STATUS=[enabled]"
+reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "ZapretTVBridge" >nul 2>&1
+if not errorlevel 1 set "STARTUP_STATUS=[enabled]"
 schtasks /query /tn "Zapret_TV_Bridge" >nul 2>&1
 if not errorlevel 1 set "STARTUP_STATUS=[enabled]"
 exit /b

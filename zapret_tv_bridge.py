@@ -1828,10 +1828,22 @@ def ensure_zapret_service_running():
 
 
 def is_startup_enabled():
-    """Checks whether autostart is enabled via Startup shortcut or Task Scheduler."""
-    startup_shortcut = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk")
-    if os.path.exists(startup_shortcut):
+    """Checks whether autostart is enabled via Registry Run, Startup folder, or Task Scheduler."""
+    startup_dir = os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup")
+    if os.path.exists(os.path.join(startup_dir, "Zapret_TV_Bridge.lnk")) or os.path.exists(os.path.join(startup_dir, "Zapret_TV_Bridge.vbs")):
         return True
+    try:
+        res = subprocess.run(r'reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "ZapretTVBridge"', shell=True, capture_output=True)
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
+    try:
+        res = subprocess.run(r'reg query "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "ZapretTVBridge"', shell=True, capture_output=True)
+        if res.returncode == 0:
+            return True
+    except Exception:
+        pass
     try:
         res = subprocess.run('schtasks /query /tn "Zapret_TV_Bridge"', shell=True, capture_output=True, text=True, errors="ignore")
         if res.returncode == 0:
@@ -2254,9 +2266,16 @@ def cmd_startup(enable, base_dir):
     local_vbs_in_repo = os.path.join(base_dir, "bridge_autostart.vbs")
 
     if not enable:
+        # 0. Remove from Registry Run
+        subprocess.run(r'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "ZapretTVBridge" /f', shell=True, capture_output=True)
+        subprocess.run(r'reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Run" /v "ZapretTVBridge" /f', shell=True, capture_output=True)
         # 1. Remove scheduled task
         subprocess.run('schtasks /delete /tn "Zapret_TV_Bridge" /f', shell=True, capture_output=True)
         # 2. Remove shortcut
+        vbs_in_startup = os.path.join(startup_folder, "Zapret_TV_Bridge.vbs")
+        if os.path.exists(vbs_in_startup):
+            try: os.remove(vbs_in_startup)
+            except Exception: pass
         if os.path.exists(shortcut_path):
             try:
                 os.remove(shortcut_path)
@@ -2318,6 +2337,15 @@ def cmd_startup(enable, base_dir):
             f.write("\r\n".join(vbs_lines))
     except Exception as e:
         print(f"[!] Предупреждение создания vbs-лаунчера: {e}")
+
+    # 3. Add to HKCU Run key and Startup folder
+    try:
+        vbs_cmd = f'wscript.exe "{vbs_path}"'
+        subprocess.run(f'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" /v "ZapretTVBridge" /t REG_SZ /d "{vbs_cmd}" /f', shell=True, capture_output=True)
+        vbs_in_startup = os.path.join(startup_folder, "Zapret_TV_Bridge.vbs")
+        with open(vbs_in_startup, "w", encoding="utf-8") as f: f.write("\r\n".join(vbs_lines))
+    except Exception:
+        pass
 
     # 3. Create/Update Scheduled Task (Runs with HIGHEST admin privileges at logon without UAC prompt)
     try:

@@ -186,13 +186,45 @@ pub fn get_zapret_service_status() -> (bool, String) {
     (is_running, strategy)
 }
 
-/// Checks whether autostart is configured via Scheduled Task or Startup shortcut.
+/// Checks whether autostart is configured via Registry Run, Startup shortcut, or Scheduled Task.
 pub fn is_startup_enabled() -> bool {
     let appdata = std::env::var("APPDATA").unwrap_or_default();
-    let shortcut = PathBuf::from(appdata)
-        .join(r"Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk");
-    if shortcut.exists() {
+    let startup_dir = PathBuf::from(&appdata)
+        .join(r"Microsoft\Windows\Start Menu\Programs\Startup");
+    if startup_dir.join("Zapret_TV_Bridge.lnk").exists()
+        || startup_dir.join("Zapret_TV_Bridge.vbs").exists()
+    {
         return true;
+    }
+
+    // Check HKCU Run key
+    let reg_hkcu = Command::new("reg")
+        .args(&[
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            "ZapretTVBridge",
+        ])
+        .output();
+    if let Ok(out) = reg_hkcu {
+        if out.status.success() {
+            return true;
+        }
+    }
+
+    // Check HKLM Run key
+    let reg_hklm = Command::new("reg")
+        .args(&[
+            "query",
+            r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            "ZapretTVBridge",
+        ])
+        .output();
+    if let Ok(out) = reg_hklm {
+        if out.status.success() {
+            return true;
+        }
     }
 
     let sch_output = Command::new("schtasks")
@@ -963,35 +995,56 @@ pub fn cmd_toggle_startup(base_dir: &Path) {
 
 /// Configures complete Windows Startup for both Zapret service and Bridge.
 pub fn cmd_startup(enable: bool, base_dir: &Path) {
-    ensure_admin(&["--menu".to_string()]);
-    if !is_admin() {
-        println!("\n[!] Ошибка: Для настройки автозагрузки требуются права Администратора.");
-        return;
-    }
-
     let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let target_dir = PathBuf::from(&local_appdata).join("ZapretTVBridge");
     let _ = std::fs::create_dir_all(&target_dir);
     let vbs_path = target_dir.join("bridge_autostart.vbs");
     let repo_vbs = base_dir.join("bridge_autostart.vbs");
 
+    let appdata = std::env::var("APPDATA").unwrap_or_default();
+    let startup_dir = PathBuf::from(&appdata)
+        .join(r"Microsoft\Windows\Start Menu\Programs\Startup");
+    let _ = std::fs::create_dir_all(&startup_dir);
+    let shortcut_path = startup_dir.join("Zapret_TV_Bridge.lnk");
+    let startup_vbs = startup_dir.join("Zapret_TV_Bridge.vbs");
+
     if !enable {
+        // 1. Remove Registry Run keys
+        let _ = Command::new("reg")
+            .args(&[
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "ZapretTVBridge",
+                "/f",
+            ])
+            .output();
+        let _ = Command::new("reg")
+            .args(&[
+                "delete",
+                r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "ZapretTVBridge",
+                "/f",
+            ])
+            .output();
+
+        // 2. Remove scheduled task
         let _ = Command::new("schtasks")
             .args(&["/delete", "/tn", "Zapret_TV_Bridge", "/f"])
             .output();
 
-        let appdata = std::env::var("APPDATA").unwrap_or_default();
-        let shortcut = PathBuf::from(appdata)
-            .join(r"Microsoft\Windows\Start Menu\Programs\Startup\Zapret_TV_Bridge.lnk");
-        let _ = std::fs::remove_file(shortcut);
-        let _ = std::fs::remove_file(vbs_path);
-        let _ = std::fs::remove_file(repo_vbs);
+        // 3. Remove Startup folder entries
+        let _ = std::fs::remove_file(&shortcut_path);
+        let _ = std::fs::remove_file(&startup_vbs);
+        let _ = std::fs::remove_file(&vbs_path);
+        let _ = std::fs::remove_file(&repo_vbs);
 
         println!("[+] Автозагрузка Windows отключена.");
         return;
     }
 
-    // Configure zapret service for AUTO start
+    // Configure zapret service for AUTO start if running with admin rights
     let _ = Command::new("sc").args(&["config", "zapret", "start=", "auto"]).output();
     let _ = Command::new("sc").args(&["config", "zapret", "depend=", "BFE/Tcpip"]).output();
 
@@ -1018,14 +1071,56 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
     );
 
     let _ = std::fs::write(&vbs_path, &vbs_content);
+    let _ = std::fs::write(&startup_vbs, &vbs_content);
 
-    // Create Scheduled Task (Runs with HIGHEST admin privileges at logon without UAC prompt)
-    let sch_cmd = format!(
-        "schtasks /create /tn \"Zapret_TV_Bridge\" /tr \"wscript.exe \\\"{}\\\"\" /sc onlogon /rl highest /f",
-        vbs_path.to_string_lossy()
+    // 1. Register in HKCU Run key (works 100% reliably on all Windows systems)
+    let vbs_cmd = format!("wscript.exe \"{}\"", vbs_path.to_string_lossy());
+    let _ = Command::new("reg")
+        .args(&[
+            "add",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            "ZapretTVBridge",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &vbs_cmd,
+            "/f",
+        ])
+        .output();
+
+    // 2. Create shortcut in Startup folder via PowerShell
+    let ps_cmd = format!(
+        "$ws = New-Object -ComObject WScript.Shell; \
+         $s = $ws.CreateShortcut('{}'); \
+         $s.TargetPath = 'wscript.exe'; \
+         $s.Arguments = '\"{}\"'; \
+         $s.WorkingDirectory = '{}'; \
+         $s.WindowStyle = 7; \
+         $s.Save()",
+        shortcut_path.to_string_lossy().replace('\'', "''"),
+        vbs_path.to_string_lossy().replace('\'', "''"),
+        norm_base.replace('\'', "''")
     );
+    let _ = Command::new("powershell")
+        .args(&["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd])
+        .output();
 
-    let _ = Command::new("cmd").args(&["/c", &sch_cmd]).output();
+    // 3. Register in Task Scheduler directly (runs with highest admin privileges if elevated)
+    let _ = Command::new("schtasks")
+        .args(&[
+            "/create",
+            "/tn",
+            "Zapret_TV_Bridge",
+            "/tr",
+            &vbs_cmd,
+            "/sc",
+            "onlogon",
+            "/rl",
+            "highest",
+            "/f",
+        ])
+        .output();
 
     // Ensure zapret service is started
     let _ = Command::new("sc").args(&["start", "zapret"]).output();
