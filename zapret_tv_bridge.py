@@ -821,7 +821,31 @@ class ZapretTVBridge:
                 shExpMatch(hostLower, "*gstatic.com*") ||
         shExpMatch(hostLower, "*youtubei.googleapis.com*") ||
         shExpMatch(hostLower, "*fonts.googleapis.com*") ||
-        shExpMatch(hostLower, "*jnn-pa.googleapis.com*")) {{
+        shExpMatch(hostLower, "*jnn-pa.googleapis.com*") ||
+        shExpMatch(hostLower, "*pornhub*") ||
+        shExpMatch(hostLower, "*phncdn*") ||
+        shExpMatch(hostLower, "*phprcdn*") ||
+        shExpMatch(hostLower, "*phnstatic*") ||
+        shExpMatch(hostLower, "*mainhub*") ||
+        shExpMatch(hostLower, "*etahub*") ||
+        shExpMatch(hostLower, "*aylo*") ||
+        shExpMatch(hostLower, "*nsimg*") ||
+        shExpMatch(hostLower, "*geekadm*") ||
+        shExpMatch(hostLower, "*rncdn7*") ||
+        shExpMatch(hostLower, "*trafficjunky*") ||
+        shExpMatch(hostLower, "*xhamster*") ||
+        shExpMatch(hostLower, "*xhcdn*") ||
+        shExpMatch(hostLower, "*xvideos*") ||
+        shExpMatch(hostLower, "*xv-cdn*") ||
+        shExpMatch(hostLower, "*youporn*") ||
+        shExpMatch(hostLower, "*ypncdn*") ||
+        shExpMatch(hostLower, "*redtube*") ||
+        shExpMatch(hostLower, "*redtubecdn*") ||
+        shExpMatch(hostLower, "*eporner*") ||
+        shExpMatch(hostLower, "*tube8*") ||
+        shExpMatch(hostLower, "*spankwire*") ||
+        shExpMatch(hostLower, "*hwcdn*") ||
+        shExpMatch(hostLower, "*futanari*")) {{
         return proxy;
     }}
 
@@ -2529,7 +2553,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.11")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.13")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")

@@ -185,12 +185,91 @@ fn print_help() {
 struct PidCleanup {
     pid_file: PathBuf,
     ip_file: PathBuf,
+    tg_pid_file: PathBuf,
+    tg_port: u16,
+    base_dir: PathBuf,
 }
 
 impl Drop for PidCleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.pid_file);
         let _ = std::fs::remove_file(&self.ip_file);
+        let _ = std::fs::remove_file(&self.tg_pid_file);
+        ensure_tg_port_free(self.tg_port, &self.base_dir);
+    }
+}
+
+/// Discovers Python executable (pythonw.exe preferred for silent execution, fallback to python.exe).
+fn find_python_binary() -> Option<PathBuf> {
+    if let Ok(py) = std::env::var("BRIDGE_PYTHON_BIN") {
+        let p = PathBuf::from(py);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    for cmd_name in &["pythonw", "python"] {
+        if let Ok(output) = std::process::Command::new("where.exe").arg(cmd_name).output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let path = PathBuf::from(line.trim());
+                    if path.exists() && !line.to_lowercase().contains("windowsapps") {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        let programs = PathBuf::from(local_appdata).join("Programs").join("Python");
+        if programs.exists() {
+            if let Ok(entries) = std::fs::read_dir(programs) {
+                for entry in entries.flatten() {
+                    let pw = entry.path().join("pythonw.exe");
+                    if pw.exists() {
+                        return Some(pw);
+                    }
+                    let p = entry.path().join("python.exe");
+                    if p.exists() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Ensures Telegram proxy port (default: 1443) is free from previous/stale instances.
+fn ensure_tg_port_free(port: u16, base_dir: &std::path::Path) {
+    let tg_pid_file = base_dir.join("tg_proxy.pid");
+    if tg_pid_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&tg_pid_file) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                #[cfg(windows)]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(&["/F", "/PID", &pid.to_string()])
+                        .output();
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&tg_pid_file);
+    }
+
+    #[cfg(windows)]
+    {
+        let ps_cmd = format!(
+            "$pids = (Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue).OwningProcess; \
+             foreach ($p in $pids) {{ Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }}",
+            port
+        );
+        let _ = std::process::Command::new("powershell")
+            .args(&["-NoProfile", "-Command", &ps_cmd])
+            .output();
     }
 }
 
@@ -261,9 +340,16 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     // Register PID and IP files with RAII cleanup
     let pid_file = base_dir.join("tv_proxy.pid");
     let ip_file = base_dir.join("tv_proxy.ip");
+    let tg_pid_file = base_dir.join("tg_proxy.pid");
     let _ = std::fs::write(&pid_file, std::process::id().to_string());
     let _ = std::fs::write(&ip_file, format!("{}:{}", default_ip, http_addr.port()));
-    let _cleanup = PidCleanup { pid_file, ip_file };
+    let _cleanup = PidCleanup {
+        pid_file,
+        ip_file,
+        tg_pid_file: tg_pid_file.clone(),
+        tg_port,
+        base_dir: base_dir.clone(),
+    };
 
     let web_config = zapret_tv_bridge_rs::web::WebConfig::new(
         http_addr.port(),
@@ -300,62 +386,169 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         }
     });
 
-    // 3. Telegram FakeTLS / MTProto Gateway on port 1443
-    let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
-        tg_addr,
-        tg_secret,
-        tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
-    );
-    let m3 = Arc::clone(&metrics);
-    let mut _tg_handle = tokio::spawn(async move {
-        if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
-            eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
-            Err(e)
-        } else {
-            Ok(())
+    // 3. Telegram Proxy (Flowseal tg-ws-proxy WebSocket Bridge or internal FakeTLS fallback)
+    let tg_proxy_dir = if base_dir.join("tg_ws_proxy").is_dir() {
+        Some(base_dir.join("tg_ws_proxy"))
+    } else if base_dir.join("..").join("tg_ws_proxy").is_dir() {
+        Some(base_dir.join("..").join("tg_ws_proxy"))
+    } else {
+        None
+    };
+    let python_bin = find_python_binary();
+
+    let mut _tg_handle = if let (Some(tg_dir), Some(py_bin)) = (tg_proxy_dir, python_bin) {
+        ensure_tg_port_free(tg_port, &base_dir);
+
+        let mut cmd = std::process::Command::new(&py_bin);
+        cmd.args(&[
+            "-m",
+            "proxy.tg_ws_proxy",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            &tg_port.to_string(),
+            "--secret",
+            &tg_secret_str,
+            "--dc-ip",
+            "2:149.154.167.220",
+            "--dc-ip",
+            "4:149.154.167.220",
+        ]);
+        let tg_log_path = base_dir.join("tg_proxy.log");
+        if let Some(s) = tg_log_path.to_str() {
+            cmd.args(&["--log-file", s]);
         }
-    });
+        cmd.current_dir(&tg_dir);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                let c_pid = child.id();
+                let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
+                if !is_daemon {
+                    println!(
+                        "[*] Telegram WS Proxy (tgwsproxy) запущен на 0.0.0.0:{} [PID: {}]",
+                        tg_port, c_pid
+                    );
+                }
+                let pid_file_copy = tg_pid_file.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                eprintln!("[TgWsProxy] Telegram proxy process exited with status: {:?}", status);
+                                let _ = std::fs::remove_file(&pid_file_copy);
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    "tgwsproxy process exited",
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                let _ = std::fs::remove_file(&pid_file_copy);
+                                return Err(e);
+                            }
+                        }
+                    }
+                })
+            }
+            Err(e) => {
+                eprintln!("[TgWsProxy] Failed to spawn tgwsproxy via {:?}: {}", py_bin, e);
+                let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+                    tg_addr,
+                    tg_secret,
+                    tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
+                );
+                let m3 = Arc::clone(&metrics);
+                tokio::spawn(async move {
+                    if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
+                        eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
+                        Err(e)
+                    } else {
+                        Ok(())
+                    }
+                })
+            }
+        }
+    } else {
+        let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+            tg_addr,
+            tg_secret,
+            tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
+        );
+        let m3 = Arc::clone(&metrics);
+        tokio::spawn(async move {
+            if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
+                eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
+                Err(e)
+            } else {
+                Ok(())
+            }
+        })
+    };
 
     if !is_daemon {
         println!("[*] Ready for 4K video streaming, low-latency proxying, and Telegram MTProto Gateway.");
         println!(
-            "[*] Autodetect proxy: {}, Dedicated SOCKS5: {}, TG FakeTLS: {}",
-            http_addr, socks5_addr, tg_addr
+            "[*] Autodetect proxy: {}, Dedicated SOCKS5: {}, TG Gateway: 0.0.0.0:{}",
+            http_addr, socks5_addr, tg_port
         );
     }
 
     // Coordinated execution with startup fault detection and clean listener abort
-    tokio::select! {
-        res = &mut _http_handle => {
-            eprintln!("\n[!] Ошибка: Порт {} занят или недоступен: {:?}", http_addr, res);
-            eprintln!("    Возможно, служба шлюза уже запущена в фоновом режиме.");
-            eprintln!("    Используйте: ZapretTVBridge.exe --status или ZapretTVBridge.exe --restart");
-            if !is_daemon && is_stdin_terminal() {
-                menu::pause_exit();
+    if is_daemon {
+        tokio::select! {
+            res = &mut _http_handle => {
+                let _ = res;
+                std::process::exit(1);
             }
-            std::process::exit(1);
+            res = &mut _socks5_handle => {
+                let _ = res;
+                std::process::exit(1);
+            }
+            res = &mut _tg_handle => {
+                let _ = res;
+                std::process::exit(1);
+            }
+            _ = std::future::pending::<()>() => {}
         }
-        res = &mut _socks5_handle => {
-            eprintln!("\n[!] Ошибка: Порт SOCKS5 {} недоступен: {:?}", socks5_addr, res);
-            if !is_daemon && is_stdin_terminal() {
-                menu::pause_exit();
+    } else {
+        tokio::select! {
+            res = &mut _http_handle => {
+                eprintln!("\n[!] Ошибка: Порт {} занят или недоступен: {:?}", http_addr, res);
+                eprintln!("    Возможно, служба шлюза уже запущена в фоновом режиме.");
+                eprintln!("    Используйте: ZapretTVBridge.exe --status или ZapretTVBridge.exe --restart");
+                if is_stdin_terminal() {
+                    menu::pause_exit();
+                }
+                std::process::exit(1);
             }
-            std::process::exit(1);
-        }
-        res = &mut _tg_handle => {
-            eprintln!("\n[!] Ошибка: Порт Telegram FakeTLS {} недоступен: {:?}", tg_addr, res);
-            eprintln!("    Возможно, порт занят другой копией службы.");
-            eprintln!("    Используйте: ZapretTVBridge.exe --restart");
-            if !is_daemon && is_stdin_terminal() {
-                menu::pause_exit();
+            res = &mut _socks5_handle => {
+                eprintln!("\n[!] Ошибка: Порт SOCKS5 {} недоступен: {:?}", socks5_addr, res);
+                if is_stdin_terminal() {
+                    menu::pause_exit();
+                }
+                std::process::exit(1);
             }
-            std::process::exit(1);
-        }
-        sig = tokio::signal::ctrl_c() => {
-            if let Err(e) = sig {
-                eprintln!("[Warning] Error awaiting Ctrl+C signal: {e}");
+            res = &mut _tg_handle => {
+                eprintln!("\n[!] Ошибка: Служба Telegram (tgwsproxy) на порту {} завершилась: {:?}", tg_port, res);
+                eprintln!("    Возможно, порт занят другой копией службы.");
+                eprintln!("    Используйте: ZapretTVBridge.exe --restart");
+                if is_stdin_terminal() {
+                    menu::pause_exit();
+                }
+                std::process::exit(1);
             }
-            if !is_daemon {
+            sig = tokio::signal::ctrl_c() => {
+                if let Err(e) = sig {
+                    eprintln!("[Warning] Error awaiting Ctrl+C signal: {e}");
+                }
                 println!("\n[*] Сигнал остановки получен. Завершение сессий...");
             }
         }
@@ -365,6 +558,8 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     _http_handle.abort();
     _socks5_handle.abort();
     _tg_handle.abort();
+
+    ensure_tg_port_free(tg_port, &base_dir);
 
     let drain_start = std::time::Instant::now();
     let drain_timeout = std::time::Duration::from_secs(3);

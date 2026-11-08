@@ -1209,12 +1209,49 @@ impl SmartRouter {
             return (true, "target_routed");
         }
 
-        if domain_str.contains("rutracker")
-            || domain_str.contains("rutor")
-            || domain_str.contains("nnmclub")
-            || domain_str.contains("flibusta")
-        {
-            return (true, "target_routed");
+        const MEDIA_BASE_DOMAINS: &[&str] = &[
+            "rutracker.org",
+            "rutracker.cc",
+            "rutracker.net",
+            "rutor.org",
+            "rutor.info",
+            "rutor.is",
+            "nnmclub.to",
+            "flibusta.is",
+            "pornhub.com",
+            "pornhub.org",
+            "pornhubpremium.com",
+            "phncdn.com",
+            "phprcdn.com",
+            "phnstatic.com",
+            "mainhub.com",
+            "etahub.com",
+            "aylo.com",
+            "nsimg.net",
+            "geekadm.net",
+            "rncdn7.com",
+            "trafficjunky.com",
+            "trafficjunky.net",
+            "xhamster.com",
+            "xhcdn.com",
+            "xvideos.com",
+            "xv-cdn.com",
+            "youporn.com",
+            "ypncdn.com",
+            "redtube.com",
+            "redtubecdn.com",
+            "eporner.com",
+            "tube8.com",
+            "spankwire.com",
+            "hwcdn.net",
+            "futanari.xxx",
+        ];
+
+        for sub_bytes in DomainSuffixIter::new(domain_bytes) {
+            let sub_str = unsafe { std::str::from_utf8_unchecked(sub_bytes) };
+            if MEDIA_BASE_DOMAINS.contains(&sub_str) {
+                return (true, "target_routed");
+            }
         }
 
         // Check target lists (list-general.txt, list-google.txt, user lists, auto-added)

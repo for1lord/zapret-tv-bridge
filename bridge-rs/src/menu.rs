@@ -10,6 +10,8 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+#[cfg(windows)]
+const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// Checks if current process is running with Administrator privileges.
 pub fn is_admin() -> bool {
@@ -126,6 +128,30 @@ pub fn is_bridge_running(base_dir: &Path) -> (bool, Option<u32>) {
     // Secondary check: probe port 8080
     if let Ok(_stream) = std::net::TcpStream::connect_timeout(
         &"127.0.0.1:8080".parse().unwrap(),
+        std::time::Duration::from_millis(300),
+    ) {
+        return (true, None);
+    }
+
+    (false, None)
+}
+
+/// Checks whether Telegram Proxy (tgwsproxy) is running (via PID file or port 1443 probe).
+pub fn is_tg_proxy_running(base_dir: &Path) -> (bool, Option<u32>) {
+    let pid_file = base_dir.join("tg_proxy.pid");
+    if pid_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                if is_pid_alive(pid) {
+                    return (true, Some(pid));
+                }
+            }
+        }
+    }
+
+    // Secondary check: probe port 1443
+    if let Ok(_stream) = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:1443".parse().unwrap(),
         std::time::Duration::from_millis(300),
     ) {
         return (true, None);
@@ -384,7 +410,7 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
 
         println!();
         println!("  ==================================================");
-        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.12 (Rust Core)");
+        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.13 (Rust Core)");
         println!("  ==================================================");
         println!("  Служба Zapret:         {}", zapret_label);
         println!("  Шлюз для ТВ/Мобильных: {}", bridge_label);
@@ -393,9 +419,19 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
             println!("  PAC URL:               http://{}/proxy.pac", host_port);
             println!("  Smart TV:              IP {}  Port 8080", local_ip);
             if !tg_secret.is_empty() {
+                let (tg_running, tg_pid) = is_tg_proxy_running(base_dir);
+                let tg_tag = if tg_running {
+                    if let Some(p) = tg_pid {
+                        format!(" [PID: {}]", p)
+                    } else {
+                        "".to_string()
+                    }
+                } else {
+                    " [STOPPED]".to_string()
+                };
                 println!(
-                    "  Telegram:              tg://proxy?server={}&port=1443&secret=dd{}",
-                    local_ip, tg_secret
+                    "  Telegram (tgwsproxy):  tg://proxy?server={}&port=1443&secret=dd{}{}",
+                    local_ip, tg_secret, tg_tag
                 );
             }
         }
@@ -838,7 +874,10 @@ pub fn cmd_start(base_dir: &Path) -> bool {
         let res = Command::new(&exe)
             .arg("--daemon")
             .current_dir(base_dir)
-            .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
             .spawn();
 
         match res {
@@ -891,6 +930,27 @@ pub fn cmd_stop(base_dir: &Path) -> bool {
         let _ = std::fs::remove_file(&ip_file);
     }
 
+    // Stop Telegram proxy (tgwsproxy)
+    let tg_pid_file = base_dir.join("tg_proxy.pid");
+    if tg_pid_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&tg_pid_file) {
+            if let Ok(pid) = content.trim().parse::<u32>() {
+                let _ = Command::new("taskkill")
+                    .args(&["/F", "/PID", &pid.to_string()])
+                    .output();
+            }
+        }
+        let _ = std::fs::remove_file(&tg_pid_file);
+    }
+
+    #[cfg(windows)]
+    {
+        let ps_kill_tg = "$pids = (Get-NetTCPConnection -LocalPort 1443 -State Listen -ErrorAction SilentlyContinue).OwningProcess; foreach ($p in $pids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }";
+        let _ = Command::new("powershell")
+            .args(&["-NoProfile", "-Command", ps_kill_tg])
+            .output();
+    }
+
     // Terminate any other ZapretTVBridge instances except current process
     let curr_pid = std::process::id();
     #[cfg(windows)]
@@ -917,9 +977,16 @@ pub fn cmd_stop(base_dir: &Path) -> bool {
     true
 }
 
-/// Restarts the bridge background daemon.
+/// Restarts the bridge background daemon and refreshes services.
 pub fn cmd_restart(base_dir: &Path) -> bool {
-    println!("[*] Перезапуск моста...");
+    println!("[*] Перезапуск сервисов...");
+    let (zapret_running, _) = get_zapret_service_status();
+    if zapret_running {
+        println!("[*] Перезапуск службы Zapret для обновления списков...");
+        let _ = Command::new("net").args(&["stop", "zapret"]).output();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = Command::new("net").args(&["start", "zapret"]).output();
+    }
     cmd_stop(base_dir);
     std::thread::sleep(std::time::Duration::from_millis(1000));
     cmd_start(base_dir)
@@ -965,9 +1032,19 @@ pub fn cmd_status(base_dir: &Path) {
         println!("  PAC URL:        http://{}:8080/proxy.pac", local_ip);
         println!("  Smart TV:       IP {}  Порт 8080", local_ip);
         if !tg_secret.is_empty() {
+            let (tg_running, tg_pid) = is_tg_proxy_running(base_dir);
+            let tg_tag = if tg_running {
+                if let Some(p) = tg_pid {
+                    format!(" [АКТИВЕН - PID: {}]", p)
+                } else {
+                    " [АКТИВЕН]".to_string()
+                }
+            } else {
+                " [ОСТАНОВЛЕН]".to_string()
+            };
             println!(
-                "  Telegram:       tg://proxy?server={}&port=1443&secret=dd{}",
-                local_ip, tg_secret
+                "  Telegram (tgwsproxy): tg://proxy?server={}&port=1443&secret=dd{}{}",
+                local_ip, tg_secret, tg_tag
             );
         }
     } else {

@@ -22,7 +22,31 @@ r#"function FindProxyForURL(url, host) {{
         shExpMatch(hostLower, "*fonts.googleapis.com*") ||
         shExpMatch(hostLower, "*jnn-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*twitch.tv*") ||
-        shExpMatch(hostLower, "*ttvnw.net*")) {{
+        shExpMatch(hostLower, "*ttvnw.net*") ||
+        shExpMatch(hostLower, "*pornhub*") ||
+        shExpMatch(hostLower, "*phncdn*") ||
+        shExpMatch(hostLower, "*phprcdn*") ||
+        shExpMatch(hostLower, "*phnstatic*") ||
+        shExpMatch(hostLower, "*mainhub*") ||
+        shExpMatch(hostLower, "*etahub*") ||
+        shExpMatch(hostLower, "*aylo*") ||
+        shExpMatch(hostLower, "*nsimg*") ||
+        shExpMatch(hostLower, "*geekadm*") ||
+        shExpMatch(hostLower, "*rncdn7*") ||
+        shExpMatch(hostLower, "*trafficjunky*") ||
+        shExpMatch(hostLower, "*xhamster*") ||
+        shExpMatch(hostLower, "*xhcdn*") ||
+        shExpMatch(hostLower, "*xvideos*") ||
+        shExpMatch(hostLower, "*xv-cdn*") ||
+        shExpMatch(hostLower, "*youporn*") ||
+        shExpMatch(hostLower, "*ypncdn*") ||
+        shExpMatch(hostLower, "*redtube*") ||
+        shExpMatch(hostLower, "*redtubecdn*") ||
+        shExpMatch(hostLower, "*eporner*") ||
+        shExpMatch(hostLower, "*tube8*") ||
+        shExpMatch(hostLower, "*spankwire*") ||
+        shExpMatch(hostLower, "*hwcdn*") ||
+        shExpMatch(hostLower, "*futanari*")) {{
         return proxy;
     }}
 
