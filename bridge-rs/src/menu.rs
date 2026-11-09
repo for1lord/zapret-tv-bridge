@@ -419,6 +419,8 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
             println!("  PAC URL:               http://{}/proxy.pac", host_port);
             println!("  Smart TV:              IP {}  Port 8080", local_ip);
             if !tg_secret.is_empty() {
+                let clean_secret = tg_secret.strip_prefix("dd").unwrap_or(&tg_secret);
+                let clean_secret = if clean_secret.len() >= 32 { &clean_secret[..32] } else { clean_secret };
                 let (tg_running, tg_pid) = is_tg_proxy_running(base_dir);
                 let tg_tag = if tg_running {
                     if let Some(p) = tg_pid {
@@ -431,7 +433,7 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
                 };
                 println!(
                     "  Telegram (tgwsproxy):  tg://proxy?server={}&port=1443&secret=dd{}{}",
-                    local_ip, tg_secret, tg_tag
+                    local_ip, clean_secret, tg_tag
                 );
             }
         }
@@ -945,6 +947,7 @@ pub fn cmd_stop(base_dir: &Path) -> bool {
 
     #[cfg(windows)]
     {
+        let _ = Command::new("taskkill").args(&["/F", "/IM", "tgwsproxy.exe"]).output();
         let ps_kill_tg = "$pids = (Get-NetTCPConnection -LocalPort 1443 -State Listen -ErrorAction SilentlyContinue).OwningProcess; foreach ($p in $pids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }";
         let _ = Command::new("powershell")
             .args(&["-NoProfile", "-Command", ps_kill_tg])
@@ -1032,6 +1035,8 @@ pub fn cmd_status(base_dir: &Path) {
         println!("  PAC URL:        http://{}:8080/proxy.pac", local_ip);
         println!("  Smart TV:       IP {}  Порт 8080", local_ip);
         if !tg_secret.is_empty() {
+            let clean_secret = tg_secret.strip_prefix("dd").unwrap_or(&tg_secret);
+            let clean_secret = if clean_secret.len() >= 32 { &clean_secret[..32] } else { clean_secret };
             let (tg_running, tg_pid) = is_tg_proxy_running(base_dir);
             let tg_tag = if tg_running {
                 if let Some(p) = tg_pid {
@@ -1044,7 +1049,7 @@ pub fn cmd_status(base_dir: &Path) {
             };
             println!(
                 "  Telegram (tgwsproxy): tg://proxy?server={}&port=1443&secret=dd{}{}",
-                local_ip, tg_secret, tg_tag
+                local_ip, clean_secret, tg_tag
             );
         }
     } else {

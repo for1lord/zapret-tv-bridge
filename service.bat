@@ -193,6 +193,7 @@ if "!USE_STANDALONE!"=="1" (
 echo.
 echo [*] 2. Принудительное завершение всех процессов моста и Zapret...
 taskkill /F /IM ZapretTVBridge.exe >nul 2>&1
+taskkill /F /IM tgwsproxy.exe >nul 2>&1
 taskkill /F /IM winws.exe >nul 2>&1
 taskkill /F /IM tun2socks.exe >nul 2>&1
 taskkill /F /IM 3proxy.exe >nul 2>&1
@@ -204,6 +205,7 @@ for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":1443" ^| findstr "LI
 )
 del /f /q "%PROJECT_DIR%tv_proxy.pid" >nul 2>&1
 del /f /q "%PROJECT_DIR%tv_proxy.ip" >nul 2>&1
+del /f /q "%PROJECT_DIR%tg_proxy.pid" >nul 2>&1
 echo [+] Все службы и сетевые шлюзы полностью остановлены!
 if defined CLI_CMD exit /b
 echo.

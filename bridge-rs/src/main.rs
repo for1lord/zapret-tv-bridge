@@ -351,12 +351,19 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         base_dir: base_dir.clone(),
     };
 
+    let clean_tg_secret_str = tg_secret_str.strip_prefix("dd").unwrap_or(&tg_secret_str);
+    let clean_tg_secret_str = if clean_tg_secret_str.len() >= 32 {
+        clean_tg_secret_str[..32].to_string()
+    } else {
+        clean_tg_secret_str.to_string()
+    };
+
     let web_config = zapret_tv_bridge_rs::web::WebConfig::new(
         http_addr.port(),
         default_ip.clone(),
         base_dir.clone(),
         tg_port,
-        tg_secret_str.clone(),
+        clean_tg_secret_str.clone(),
         start_time,
     );
     let web_router = zapret_tv_bridge_rs::web::create_web_router(Arc::clone(&metrics), web_config);
@@ -387,6 +394,13 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     });
 
     // 3. Telegram Proxy (Flowseal tg-ws-proxy WebSocket Bridge or internal FakeTLS fallback)
+    let standalone_tg_candidates = [
+        base_dir.join("bin").join("tgwsproxy.exe"),
+        base_dir.join("tgwsproxy.exe"),
+        base_dir.join("..").join("bin").join("tgwsproxy.exe"),
+    ];
+    let standalone_tg_exe = standalone_tg_candidates.into_iter().find(|p| p.is_file());
+
     let tg_proxy_dir = if base_dir.join("tg_ws_proxy").is_dir() {
         Some(base_dir.join("tg_ws_proxy"))
     } else if base_dir.join("..").join("tg_ws_proxy").is_dir() {
@@ -396,7 +410,85 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     };
     let python_bin = find_python_binary();
 
-    let mut _tg_handle = if let (Some(tg_dir), Some(py_bin)) = (tg_proxy_dir, python_bin) {
+    let mut _tg_handle = if let Some(exe_path) = standalone_tg_exe {
+        ensure_tg_port_free(tg_port, &base_dir);
+
+        let mut cmd = std::process::Command::new(&exe_path);
+        cmd.args(&[
+            "--host",
+            "0.0.0.0",
+            "--port",
+            &tg_port.to_string(),
+            "--secret",
+            &clean_tg_secret_str,
+            "--dc-ip",
+            "2:149.154.167.220",
+            "--dc-ip",
+            "4:149.154.167.220",
+        ]);
+        let tg_log_path = base_dir.join("tg_proxy.log");
+        if let Some(s) = tg_log_path.to_str() {
+            cmd.args(&["--log-file", s]);
+        }
+        cmd.current_dir(&base_dir);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        match cmd.spawn() {
+            Ok(mut child) => {
+                let c_pid = child.id();
+                let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
+                if !is_daemon {
+                    println!(
+                        "[*] Telegram WS Proxy (tgwsproxy standalone) запущен на 0.0.0.0:{} [PID: {}]",
+                        tg_port, c_pid
+                    );
+                }
+                let pid_file_copy = tg_pid_file.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                        match child.try_wait() {
+                            Ok(Some(status)) => {
+                                eprintln!("[TgWsProxy] Telegram proxy process exited with status: {:?}", status);
+                                let _ = std::fs::remove_file(&pid_file_copy);
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    "tgwsproxy process exited",
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                let _ = std::fs::remove_file(&pid_file_copy);
+                                return Err(e);
+                            }
+                        }
+                    }
+                })
+            }
+            Err(e) => {
+                eprintln!("[TgWsProxy] Failed to spawn standalone tgwsproxy via {:?}: {}", exe_path, e);
+                let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+                    tg_addr,
+                    tg_secret,
+                    tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
+                );
+                let m3 = Arc::clone(&metrics);
+                tokio::spawn(async move {
+                    if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
+                        eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
+                        Err(e)
+                    } else {
+                        Ok(())
+                    }
+                })
+            }
+        }
+    } else if let (Some(tg_dir), Some(py_bin)) = (tg_proxy_dir, python_bin) {
         ensure_tg_port_free(tg_port, &base_dir);
 
         let mut cmd = std::process::Command::new(&py_bin);
@@ -408,7 +500,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
             "--port",
             &tg_port.to_string(),
             "--secret",
-            &tg_secret_str,
+            &clean_tg_secret_str,
             "--dc-ip",
             "2:149.154.167.220",
             "--dc-ip",
@@ -432,7 +524,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                 let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
                 if !is_daemon {
                     println!(
-                        "[*] Telegram WS Proxy (tgwsproxy) запущен на 0.0.0.0:{} [PID: {}]",
+                        "[*] Telegram WS Proxy (tgwsproxy python) запущен на 0.0.0.0:{} [PID: {}]",
                         tg_port, c_pid
                     );
                 }
