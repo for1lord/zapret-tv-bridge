@@ -59,3 +59,4 @@ GEMINI.md
 target/
 **/target/
 routing_rules.bin
+*.dll
