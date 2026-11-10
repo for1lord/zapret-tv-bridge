@@ -112,6 +112,21 @@ if exist "%PID_FILE%" (
         )
     )
 )
+if "!IS_RUNNING!"=="0" (
+    tasklist /FI "IMAGENAME eq ZapretTVBridge.exe" 2>nul | findstr /i "ZapretTVBridge.exe" >nul
+    if not errorlevel 1 (
+        for /f "tokens=5" %%a in ('netstat -aon 2^^>nul ^^| findstr ":8080" ^^| findstr "LISTENING"') do (
+            set "IS_RUNNING=1"
+            set "CURRENT_PID=%%a"
+            set "STATUS_STR=[RUNNING - PID: %%a]"
+            echo %%a> "%PID_FILE%"
+        )
+        if "!IS_RUNNING!"=="0" (
+            set "IS_RUNNING=1"
+            set "STATUS_STR=[RUNNING]"
+        )
+    )
+)
 
 set "ZAPRET_RUNNING=0"
 set "ZAPRET_STRATEGY="

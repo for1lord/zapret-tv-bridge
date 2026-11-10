@@ -851,7 +851,11 @@ class ZapretTVBridge:
         shExpMatch(hostLower, "*tube8*") ||
         shExpMatch(hostLower, "*spankwire*") ||
         shExpMatch(hostLower, "*hwcdn*") ||
-        shExpMatch(hostLower, "*futanari*")) {{
+        shExpMatch(hostLower, "*futanari*") ||
+        shExpMatch(hostLower, "*hanime*") ||
+        shExpMatch(hostLower, "*hembed*") ||
+        shExpMatch(hostLower, "*daradara*") ||
+        shExpMatch(hostLower, "*moeli-desu*")) {{
         return proxy;
     }}
 

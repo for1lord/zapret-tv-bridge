@@ -1143,7 +1143,7 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
     let vbs_content = format!(
         "' Zapret TV & Mobile Bridge -- Silent AutoStart Launcher\r\n\
          Option Explicit\r\n\
-         Dim fso, shell, curDir\r\n\
+         Dim fso, shell, curDir, objWMIService, colProcesses\r\n\
          Set fso = CreateObject(\"Scripting.FileSystemObject\")\r\n\
          Set shell = CreateObject(\"WScript.Shell\")\r\n\
          curDir = \"{}\"\r\n\
@@ -1151,12 +1151,17 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
          shell.CurrentDirectory = curDir\r\n\
          On Error Resume Next\r\n\
          shell.Run \"cmd.exe /c sc start zapret\", 0, False\r\n\
-         If fso.FileExists(curDir & \"\\bin\\ZapretTVBridge.exe\") Then\r\n\
-             shell.Run \"\"\"\" & curDir & \"\\bin\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
-         ElseIf fso.FileExists(curDir & \"\\ZapretTVBridge.exe\") Then\r\n\
-             shell.Run \"\"\"\" & curDir & \"\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
-         ElseIf fso.FileExists(curDir & \"\\bridge-rs\\target\\release\\ZapretTVBridge.exe\") Then\r\n\
-             shell.Run \"\"\"\" & curDir & \"\\bridge-rs\\target\\release\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
+         shell.Run \"netsh advfirewall firewall add rule name=\"\"Zapret TV Bridge - Block QUIC (UDP 443)\"\" dir=out action=block protocol=UDP remoteport=443\", 0, False\r\n\
+         Set objWMIService = GetObject(\"winmgmts:\\\\.\\root\\cimv2\")\r\n\
+         Set colProcesses = objWMIService.ExecQuery(\"Select * from Win32_Process Where Name = 'ZapretTVBridge.exe'\")\r\n\
+         If colProcesses.Count = 0 Then\r\n\
+             If fso.FileExists(curDir & \"\\bin\\ZapretTVBridge.exe\") Then\r\n\
+                 shell.Run \"\"\"\" & curDir & \"\\bin\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
+             ElseIf fso.FileExists(curDir & \"\\ZapretTVBridge.exe\") Then\r\n\
+                 shell.Run \"\"\"\" & curDir & \"\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
+             ElseIf fso.FileExists(curDir & \"\\bridge-rs\\target\\release\\ZapretTVBridge.exe\") Then\r\n\
+                 shell.Run \"\"\"\" & curDir & \"\\bridge-rs\\target\\release\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
+             End If\r\n\
          End If\r\n",
         norm_base
     );
@@ -1166,24 +1171,10 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
     let _ = std::fs::remove_file(&shortcut_path);
     let _ = std::fs::remove_file(&startup_vbs);
 
-    // 1. Register in HKCU Run key (primary standard Windows autostart)
     let vbs_cmd = format!("wscript.exe \"{}\"", vbs_path.to_string_lossy());
-    let _ = Command::new("reg")
-        .args(&[
-            "add",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-            "/v",
-            "ZapretTVBridge",
-            "/t",
-            "REG_SZ",
-            "/d",
-            &vbs_cmd,
-            "/f",
-        ])
-        .output();
 
-    // 3. Register in Task Scheduler directly (runs with highest admin privileges if elevated)
-    let _ = Command::new("schtasks")
+    // 1. Register in Task Scheduler with highest admin privileges (silent on logon)
+    let schtasks_res = Command::new("schtasks")
         .args(&[
             "/create",
             "/tn",
@@ -1197,6 +1188,36 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
             "/f",
         ])
         .output();
+
+    let task_ok = schtasks_res.map(|o| o.status.success()).unwrap_or(false);
+
+    // If Task Scheduler is active, remove HKCU Run to prevent duplicate double-starts on boot.
+    // If Task Scheduler failed (e.g. non-elevated), fallback to HKCU Run.
+    if task_ok {
+        let _ = Command::new("reg")
+            .args(&[
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "ZapretTVBridge",
+                "/f",
+            ])
+            .output();
+    } else {
+        let _ = Command::new("reg")
+            .args(&[
+                "add",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "ZapretTVBridge",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &vbs_cmd,
+                "/f",
+            ])
+            .output();
+    }
 
     // Ensure zapret service is started
     let _ = Command::new("sc").args(&["start", "zapret"]).output();

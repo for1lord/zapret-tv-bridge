@@ -1261,6 +1261,14 @@ impl SmartRouter {
             "spankwire.com",
             "hwcdn.net",
             "futanari.xxx",
+            "hanime1.me",
+            "hanime.tv",
+            "hanime-cdn.com",
+            "hanimeone.me",
+            "hembed.com",
+            "vdownload.hembed.com",
+            "moeli-desu.com",
+            "daradara.me",
         ];
 
         for sub_bytes in DomainSuffixIter::new(domain_bytes) {
