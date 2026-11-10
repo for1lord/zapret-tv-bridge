@@ -51,6 +51,9 @@ if /i "%CLI_CMD%"=="remove" goto :opt_remove_all
 if /i "%CLI_CMD%"=="status" goto :opt_status
 if /i "%CLI_CMD%"=="start" goto :opt_start_all
 if /i "%CLI_CMD%"=="stop" goto :opt_remove_all
+if /i "%CLI_CMD%"=="optimize-browsers" goto :opt_optimize_browsers
+if /i "%CLI_CMD%"=="fix-browsers" goto :opt_optimize_browsers
+if /i "%CLI_CMD%"=="restart" goto :opt_restart
 
 :menu_loop
 call :refresh_status
@@ -78,13 +81,15 @@ echo.
 echo   :: НАСТРОЙКИ
 echo      4. Автозагрузка Windows              !STARTUP_STATUS!
 echo      5. Открыть веб-панель в браузере
+echo      6. Оптимизировать скорость в браузерах (Edge, Chrome, Yandex)
+echo      7. Перезапустить шлюз (Restart Bridge)
 echo   --------------------------------------------------
 echo      0. Выход
 echo   --------------------------------------------------
 echo.
 
 set "CHOICE="
-set /p CHOICE="   Выберите пункт [0-5]: "
+set /p CHOICE="   Выберите пункт [0-7]: "
 
 if not defined CHOICE goto :menu_loop
 if "%CHOICE%"=="1" goto :opt_install_all
@@ -92,6 +97,8 @@ if "%CHOICE%"=="2" goto :opt_remove_all
 if "%CHOICE%"=="3" goto :opt_status
 if "%CHOICE%"=="4" goto :opt_startup
 if "%CHOICE%"=="5" goto :opt_dashboard
+if "%CHOICE%"=="6" goto :opt_optimize_browsers
+if "%CHOICE%"=="7" goto :opt_restart
 if "%CHOICE%"=="0" exit /b
 goto :menu_loop
 
@@ -272,6 +279,36 @@ goto :menu_loop
 call :refresh_status
 start "" "http://!HOST_PORT!/"
 if defined CLI_CMD exit /b
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 6. OPTIMIZE BROWSERS (PARALLEL DOWNLOADING)
+:: -----------------------------------------------------------------------------
+:opt_optimize_browsers
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --optimize-browsers
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --optimize-browsers
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 7. RESTART BRIDGE
+:: -----------------------------------------------------------------------------
+:opt_restart
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --restart
+) else (
+    python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --restart
+)
+if defined CLI_CMD exit /b
+echo.
+pause
 goto :menu_loop
 
 :: -----------------------------------------------------------------------------

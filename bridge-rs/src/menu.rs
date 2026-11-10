@@ -448,13 +448,14 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
         println!("  :: НАСТРОЙКИ");
         println!("     4. Автозагрузка Windows              {}", startup_status);
         println!("     5. Открыть веб-панель в браузере");
-        println!("     6. Перезапустить шлюз (Restart Bridge)");
+        println!("     6. Оптимизировать скорость браузеров (Parallel Downloading)");
+        println!("     7. Перезапустить шлюз (Restart Bridge)");
         println!();
         println!("  --------------------------------------------------");
         println!("     0. Выход");
         println!("  --------------------------------------------------");
         println!();
-        print!("   Выберите пункт [0-6]: ");
+        print!("   Выберите пункт [0-7]: ");
         use std::io::Write;
         let _ = std::io::stdout().flush();
 
@@ -487,6 +488,10 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
                 cmd_open_browser(&format!("http://{}/", host_port));
             }
             "6" => {
+                cmd_optimize_browsers();
+                pause_menu();
+            }
+            "7" => {
                 cmd_restart(base_dir);
                 pause_menu();
             }
@@ -511,6 +516,7 @@ pub fn cmd_install_all(base_dir: &Path, chosen_strategy: Option<&str>) -> bool {
     println!("\n[*] Запуск локального шлюза для Smart TV и мобильных устройств...");
     cmd_start(base_dir);
     cmd_firewall();
+    cmd_optimize_browsers();
 
     println!("\n  ==================================================");
     println!("  [+] ВСЕ СЛУЖБЫ УСПЕШНО УСТАНОВЛЕНЫ И ЗАПУЩЕНЫ!");
@@ -519,6 +525,7 @@ pub fn cmd_install_all(base_dir: &Path, chosen_strategy: Option<&str>) -> bool {
     println!("  2. Сеть Windows в заводском режиме (прямое подключение).");
     println!("  3. Высокоскоростной шлюз Rust для ТВ и смартфонов запущен.");
     println!("  4. Системный прокси отключен для изоляции сред разработки.");
+    println!("  5. Многопоточная параллельная загрузка в браузерах настроена.");
     println!("  --------------------------------------------------\n");
 
     cmd_status(base_dir);
@@ -1346,4 +1353,242 @@ pub fn cmd_test() {
     }
     println!("  --------------------------------------------------");
     println!();
+}
+
+/// Chromium-based browser profile target definition.
+struct BrowserTarget {
+    name: &'static str,
+    relative_path: &'static str,
+    is_roaming: bool,
+}
+
+const BROWSER_TARGETS: &[BrowserTarget] = &[
+    BrowserTarget {
+        name: "Microsoft Edge",
+        relative_path: r"Microsoft\Edge\User Data\Local State",
+        is_roaming: false,
+    },
+    BrowserTarget {
+        name: "Google Chrome",
+        relative_path: r"Google\Chrome\User Data\Local State",
+        is_roaming: false,
+    },
+    BrowserTarget {
+        name: "Brave Browser",
+        relative_path: r"BraveSoftware\Brave-Browser\User Data\Local State",
+        is_roaming: false,
+    },
+    BrowserTarget {
+        name: "Yandex Browser",
+        relative_path: r"Yandex\YandexBrowser\User Data\Local State",
+        is_roaming: false,
+    },
+    BrowserTarget {
+        name: "Vivaldi",
+        relative_path: r"Vivaldi\User Data\Local State",
+        is_roaming: false,
+    },
+    BrowserTarget {
+        name: "Chromium",
+        relative_path: r"Chromium\User Data\Local State",
+        is_roaming: false,
+    },
+    BrowserTarget {
+        name: "Opera",
+        relative_path: r"Opera Software\Opera Stable\Local State",
+        is_roaming: true,
+    },
+    BrowserTarget {
+        name: "Opera GX",
+        relative_path: r"Opera Software\Opera GX Stable\Local State",
+        is_roaming: true,
+    },
+];
+
+/// Updates a Chromium Local State JSON string to ensure `enable-parallel-downloading@1`
+/// is present in `browser.enabled_labs_experiments`.
+/// Returns `(updated_json_string, modified_bool)`.
+pub fn enable_parallel_downloading_in_json(content: &str) -> Result<(String, bool), serde_json::Error> {
+    let mut val: serde_json::Value = serde_json::from_str(content)?;
+    let mut modified = false;
+
+    if let serde_json::Value::Object(ref mut root) = val {
+        let browser_entry = root
+            .entry("browser")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+
+        if let serde_json::Value::Object(ref mut browser_map) = browser_entry {
+            let experiments_entry = browser_map
+                .entry("enabled_labs_experiments")
+                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+
+            if let serde_json::Value::Array(ref mut exp_arr) = experiments_entry {
+                let initial_len = exp_arr.len();
+                exp_arr.retain(|x| x.as_str() != Some("enable-parallel-downloading@2"));
+                if exp_arr.len() != initial_len {
+                    modified = true;
+                }
+
+                if !exp_arr.iter().any(|x| x.as_str() == Some("enable-parallel-downloading@1")) {
+                    exp_arr.push(serde_json::Value::String("enable-parallel-downloading@1".to_string()));
+                    modified = true;
+                }
+            }
+        }
+    }
+
+    if modified {
+        let new_content = serde_json::to_string(&val)?;
+        Ok((new_content, true))
+    } else {
+        Ok((content.to_string(), false))
+    }
+}
+
+/// Scans installed Chromium-based browsers across all user profiles and automatically enables
+/// multi-threaded parallel downloading (`enable-parallel-downloading@1`) to eliminate throughput drops.
+pub fn cmd_optimize_browsers() -> usize {
+    println!();
+    println!("  ==================================================");
+    println!("  ОПТИМИЗАЦИЯ СКОРОСТИ ЗАГРУЗКИ В БРАУЗЕРАХ");
+    println!("  (Параллельная многопоточная загрузка Chromium)");
+    println!("  ==================================================");
+
+    let mut roots: Vec<(PathBuf, bool)> = Vec::new();
+
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        roots.push((PathBuf::from(local_appdata), false));
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        roots.push((PathBuf::from(appdata), true));
+    }
+
+    #[cfg(windows)]
+    {
+        if let Ok(entries) = std::fs::read_dir(r"C:\Users") {
+            for entry in entries.flatten() {
+                let user_dir = entry.path();
+                if user_dir.is_dir() {
+                    let local = user_dir.join("AppData").join("Local");
+                    if local.is_dir() {
+                        roots.push((local, false));
+                    }
+                    let roaming = user_dir.join("AppData").join("Roaming");
+                    if roaming.is_dir() {
+                        roots.push((roaming, true));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut processed_paths = std::collections::HashSet::new();
+    let mut modified_count = 0;
+    let mut found_count = 0;
+
+    for (root_dir, is_roaming) in &roots {
+        for target in BROWSER_TARGETS {
+            if target.is_roaming == *is_roaming {
+                let state_file = root_dir.join(target.relative_path);
+                if state_file.is_file() {
+                    let canonical = state_file.canonicalize().unwrap_or_else(|_| state_file.clone());
+                    if !processed_paths.insert(canonical) {
+                        continue;
+                    }
+
+                    found_count += 1;
+                    match std::fs::read_to_string(&state_file) {
+                        Ok(content) => {
+                            match enable_parallel_downloading_in_json(&content) {
+                                Ok((new_content, changed)) => {
+                                    if changed {
+                                        let bak_file = state_file.with_extension("bak");
+                                        let _ = std::fs::copy(&state_file, &bak_file);
+                                        if std::fs::write(&state_file, new_content).is_ok() {
+                                            println!("  [+] {}: многопоточная параллельная загрузка успешно включена!", target.name);
+                                            modified_count += 1;
+                                        } else {
+                                            println!("  [!] {}: ошибка записи файла Local State", target.name);
+                                        }
+                                    } else {
+                                        println!("  [*] {}: многопоточная загрузка уже была активна", target.name);
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("  [!] {}: ошибка структуры JSON ({})", target.name, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("  [!] {}: ошибка чтения файла ({})", target.name, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if found_count == 0 {
+        println!("  [*] Совместимые Chromium браузеры не найдены.");
+    } else {
+        println!("  --------------------------------------------------");
+        println!("  [+] Обработано браузеров: {}, оптимизировано новых: {}", found_count, modified_count);
+
+        #[cfg(windows)]
+        {
+            let browser_exes = ["msedge.exe", "chrome.exe", "brave.exe", "browser.exe", "opera.exe", "vivaldi.exe"];
+            let mut running = Vec::new();
+            for exe in &browser_exes {
+                if let Ok(out) = Command::new("tasklist").args(&["/FI", &format!("IMAGENAME eq {}", exe)]).output() {
+                    let text = String::from_utf8_lossy(&out.stdout);
+                    if text.contains(exe) {
+                        running.push(*exe);
+                    }
+                }
+            }
+            if !running.is_empty() {
+                println!();
+                println!("  [!] Внимание: Обнаружены открытые браузеры ({}).", running.join(", "));
+                println!("      Для вступления изменений в силу закройте и снова откройте браузер.");
+            }
+        }
+    }
+    println!("  --------------------------------------------------\n");
+    modified_count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enable_parallel_downloading_empty_json() {
+        let raw = "{}";
+        let (updated, changed) = enable_parallel_downloading_in_json(raw).expect("should succeed");
+        assert!(changed);
+        let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
+        let exp = parsed["browser"]["enabled_labs_experiments"].as_array().unwrap();
+        assert_eq!(exp.len(), 1);
+        assert_eq!(exp[0], "enable-parallel-downloading@1");
+    }
+
+    #[test]
+    fn test_enable_parallel_downloading_already_present() {
+        let raw = r#"{"browser":{"enabled_labs_experiments":["enable-parallel-downloading@1"]}}"#;
+        let (_updated, changed) = enable_parallel_downloading_in_json(raw).expect("should succeed");
+        assert!(!changed);
+    }
+
+    #[test]
+    fn test_enable_parallel_downloading_replaces_disabled() {
+        let raw = r#"{"browser":{"enabled_labs_experiments":["enable-parallel-downloading@2","other-flag@1"]}}"#;
+        let (updated, changed) = enable_parallel_downloading_in_json(raw).expect("should succeed");
+        assert!(changed);
+        let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
+        let exp = parsed["browser"]["enabled_labs_experiments"].as_array().unwrap();
+        assert_eq!(exp.len(), 2);
+        assert!(exp.iter().any(|v| v == "enable-parallel-downloading@1"));
+        assert!(!exp.iter().any(|v| v == "enable-parallel-downloading@2"));
+        assert!(exp.iter().any(|v| v == "other-flag@1"));
+    }
 }

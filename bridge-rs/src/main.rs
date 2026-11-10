@@ -49,6 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu::cmd_fix_proxy();
         return Ok(());
     }
+    if args.iter().any(|a| a == "--optimize-browsers" || a == "--fix-browsers") {
+        menu::cmd_optimize_browsers();
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--startup-enable") {
         menu::ensure_admin(&args);
         menu::cmd_startup(true, &base_dir);
@@ -172,6 +176,7 @@ fn print_help() {
     println!("  --startup-disable  Disable Windows Startup");
     println!("  --firewall         Configure Windows Firewall rules");
     println!("  --fix-proxy        Reset Windows system proxy");
+    println!("  --optimize-browsers Enable multi-threaded parallel downloading in Chromium browsers");
     println!("  --test             Run network latency and DNS tests");
     println!("  -h, --help         Print help information");
     println!("  -v, --version      Print version information\n");

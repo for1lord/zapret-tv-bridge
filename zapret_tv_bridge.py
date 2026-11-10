@@ -2044,6 +2044,124 @@ def cmd_optimize_network():
     return cmd_restore_network_defaults()
 
 
+def enable_parallel_downloading_in_json(content: str) -> tuple[str, bool]:
+    """Updates Chromium Local State JSON to enable parallel multi-threaded downloading."""
+    data = json.loads(content)
+    modified = False
+    if not isinstance(data, dict):
+        return content, False
+    browser = data.setdefault("browser", {})
+    if not isinstance(browser, dict):
+        browser = {}
+        data["browser"] = browser
+    exp = browser.setdefault("enabled_labs_experiments", [])
+    if not isinstance(exp, list):
+        exp = []
+        browser["enabled_labs_experiments"] = exp
+
+    if "enable-parallel-downloading@2" in exp:
+        exp.remove("enable-parallel-downloading@2")
+        modified = True
+    if "enable-parallel-downloading@1" not in exp:
+        exp.append("enable-parallel-downloading@1")
+        modified = True
+
+    if modified:
+        return json.dumps(data, ensure_ascii=False, separators=(',', ':')), True
+    return content, False
+
+
+def cmd_optimize_browsers() -> int:
+    """Scans and enables multi-threaded parallel downloading across Chromium-based browsers."""
+    print("\n  ==================================================")
+    print("  ОПТИМИЗАЦИЯ СКОРОСТИ ЗАГРУЗКИ В БРАУЗЕРАХ")
+    print("  (Параллельная многопоточная загрузка Chromium)")
+    print("  ==================================================")
+
+    browser_targets = [
+        ("Microsoft Edge", r"Microsoft\Edge\User Data\Local State", False),
+        ("Google Chrome", r"Google\Chrome\User Data\Local State", False),
+        ("Brave Browser", r"BraveSoftware\Brave-Browser\User Data\Local State", False),
+        ("Yandex Browser", r"Yandex\YandexBrowser\User Data\Local State", False),
+        ("Vivaldi", r"Vivaldi\User Data\Local State", False),
+        ("Chromium", r"Chromium\User Data\Local State", False),
+        ("Opera", r"Opera Software\Opera Stable\Local State", True),
+        ("Opera GX", r"Opera Software\Opera GX Stable\Local State", True),
+    ]
+
+    roots = []
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        roots.append((local_appdata, False))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        roots.append((appdata, True))
+
+    users_dir = r"C:\Users"
+    if os.path.isdir(users_dir):
+        try:
+            for u in os.listdir(users_dir):
+                upath = os.path.join(users_dir, u)
+                if os.path.isdir(upath):
+                    loc = os.path.join(upath, "AppData", "Local")
+                    if os.path.isdir(loc):
+                        roots.append((loc, False))
+                    roam = os.path.join(upath, "AppData", "Roaming")
+                    if os.path.isdir(roam):
+                        roots.append((roam, True))
+        except Exception:
+            pass
+
+    processed = set()
+    modified_count = 0
+    found_count = 0
+
+    for root_dir, is_roaming in roots:
+        for b_name, rel_path, b_roaming in browser_targets:
+            if is_roaming == b_roaming:
+                target_path = os.path.normpath(os.path.join(root_dir, rel_path))
+                if os.path.isfile(target_path):
+                    if target_path.lower() in processed:
+                        continue
+                    processed.add(target_path.lower())
+                    found_count += 1
+                    try:
+                        with open(target_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        new_content, changed = enable_parallel_downloading_in_json(content)
+                        if changed:
+                            bak_path = target_path + ".bak"
+                            shutil.copyfile(target_path, bak_path)
+                            with open(target_path, "w", encoding="utf-8") as f:
+                                f.write(new_content)
+                            print(f"  [+] {b_name}: многопоточная параллельная загрузка успешно включена!")
+                            modified_count += 1
+                        else:
+                            print(f"  [*] {b_name}: многопоточная загрузка уже была активна")
+                    except Exception as e:
+                        print(f"  [!] {b_name}: ошибка обработки ({e})")
+
+    if found_count == 0:
+        print("  [*] Совместимые Chromium браузеры не найдены.")
+    else:
+        print("  --------------------------------------------------")
+        print(f"  [+] Обработано браузеров: {found_count}, оптимизировано новых: {modified_count}")
+        browser_exes = ["msedge.exe", "chrome.exe", "brave.exe", "browser.exe", "opera.exe", "vivaldi.exe"]
+        running = []
+        for exe in browser_exes:
+            try:
+                res = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe}"], capture_output=True, text=True)
+                if exe.lower() in res.stdout.lower():
+                    running.append(exe)
+            except Exception:
+                pass
+        if running:
+            print(f"\n  [!] Внимание: Обнаружены открытые браузеры ({', '.join(running)}).")
+            print("      Для вступления изменений в силу закройте и снова откройте браузер.")
+    print("  --------------------------------------------------\n")
+    return modified_count
+
+
 def cmd_remove_strategy():
     """Stops and deletes Zapret Windows service and WinDivert drivers."""
     if not is_admin():
@@ -2478,6 +2596,7 @@ def cmd_install_all(base_dir, chosen_strategy=None):
 
     print("\n[*] Запуск локального шлюза для Smart TV и мобильных устройств...")
     cmd_start(base_dir)
+    cmd_optimize_browsers()
 
     print("\n  ==================================================")
     print("  [+] ВСЕ СЛУЖБЫ УСПЕШНО УСТАНОВЛЕНЫ И ЗАПУЩЕНЫ!")
@@ -2486,6 +2605,7 @@ def cmd_install_all(base_dir, chosen_strategy=None):
     print("  2. Сеть Windows в заводском режиме (политики браузеров и DNS не блокируются).")
     print("  3. Локальный шлюз для ТВ и мобильных устройств работает.")
     print("  4. Среды разработки защищены (системный прокси отключен).")
+    print("  5. Многопоточная параллельная загрузка в браузерах настроена.")
     print("  --------------------------------------------------\n")
     cmd_status(base_dir)
     return True
@@ -2587,6 +2707,8 @@ def cmd_menu(base_dir):
         print("  :: НАСТРОЙКИ")
         print(f"     4. Автозагрузка Windows              {startup_status}")
         print("     5. Открыть веб-панель в браузере")
+        print("     6. Оптимизировать скорость в браузерах (Edge, Chrome, Yandex)")
+        print("     7. Перезапустить шлюз (Restart Bridge)")
         print()
         print("  --------------------------------------------------")
         print("     0. Выход")
@@ -2594,7 +2716,7 @@ def cmd_menu(base_dir):
         print()
 
         try:
-            choice = input("   Выберите пункт [0-5]: ").strip()
+            choice = input("   Выберите пункт [0-7]: ").strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -2615,6 +2737,12 @@ def cmd_menu(base_dir):
         elif choice == "5":
             import webbrowser
             webbrowser.open(f"http://{host_port}/")
+        elif choice == "6":
+            cmd_optimize_browsers()
+            pause_menu()
+        elif choice == "7":
+            cmd_restart(base_dir)
+            pause_menu()
 
 
 def main():
@@ -2641,6 +2769,8 @@ def main():
     parser.add_argument("--remove-service", action="store_true", help="Stop and remove Zapret Windows service")
     parser.add_argument("--fix-proxy", action="store_true", help="Clear Windows System Proxy for direct system connection")
     parser.add_argument("--optimize-network", action="store_true", help="Optimize Windows 10/11 network stack (RSC, QUIC, Kyber, IPv6)")
+    parser.add_argument("--optimize-browsers", action="store_true", help="Enable multi-threaded parallel downloading in Chromium browsers")
+    parser.add_argument("--fix-browsers", action="store_true", help="Alias for --optimize-browsers")
     parser.add_argument("--wintun-start", action="store_true", help="Start Wintun L3 Gateway with Split Tunneling")
     parser.add_argument("--wintun-stop", action="store_true", help="Stop Wintun L3 Gateway and restore routes")
     parser.add_argument("--wintun-status", action="store_true", help="Display Wintun Gateway status")
@@ -2704,6 +2834,9 @@ def main():
     if args.optimize_network:
         ensure_admin()
         cmd_restore_network_defaults()
+        sys.exit(0)
+    if args.optimize_browsers or args.fix_browsers:
+        cmd_optimize_browsers()
         sys.exit(0)
     if args.wintun_start:
         cmd_wintun_start(base_dir)
