@@ -54,7 +54,10 @@ r#"function FindProxyForURL(url, host) {{
         shExpMatch(hostLower, "*hanime*") ||
         shExpMatch(hostLower, "*hembed*") ||
         shExpMatch(hostLower, "*daradara*") ||
-        shExpMatch(hostLower, "*moeli-desu*")) {{
+        shExpMatch(hostLower, "*moeli-desu*") ||
+        shExpMatch(hostLower, "*github.com*") ||
+        shExpMatch(hostLower, "*githubassets.com*") ||
+        shExpMatch(hostLower, "*githubusercontent.com*")) {{
         return proxy;
     }}
 
