@@ -14,9 +14,9 @@ use crate::socks5;
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(3000);
 pub const MAX_HEADER_SIZE: usize = 65536;
-pub const UPSTREAM_BUF_SIZE: usize = 16384;   // 16 KB client -> remote
-pub const DOWNSTREAM_BUF_SIZE: usize = 65536; // 64 KB remote -> client
-pub const SOCKET_BUF_SIZE: usize = 128 * 1024; // 128 KB OS socket buffer
+pub const UPSTREAM_BUF_SIZE: usize = 32768;    // 32 KB client -> remote
+pub const DOWNSTREAM_BUF_SIZE: usize = 262144; // 256 KB remote -> client (optimized for high-bitrate streaming)
+pub const SOCKET_BUF_SIZE: usize = 512 * 1024; // 512 KB OS socket buffer
 
 /// Runs the unified protocol-autodetecting proxy listener with default web router.
 pub async fn run_proxy_listener(

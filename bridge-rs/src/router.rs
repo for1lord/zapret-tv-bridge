@@ -1209,7 +1209,23 @@ impl SmartRouter {
             return (true, "target_routed");
         }
 
+        if domain_str.contains("twitch.tv")
+            || domain_str.contains("ttvnw.net")
+            || domain_str.contains("jtvnw.net")
+            || domain_str.contains("twitchcdn.net")
+            || domain_str.contains("ext-twitch.tv")
+            || domain_str.contains("live-video.net")
+        {
+            return (true, "target_routed");
+        }
+
         const MEDIA_BASE_DOMAINS: &[&str] = &[
+            "twitch.tv",
+            "ttvnw.net",
+            "jtvnw.net",
+            "twitchcdn.net",
+            "ext-twitch.tv",
+            "live-video.net",
             "rutracker.org",
             "rutracker.cc",
             "rutracker.net",
@@ -1508,6 +1524,10 @@ mod tests {
         assert_eq!(router.should_route("cool"), (true, "database_routed"));
         assert_eq!(router.should_route("game"), (true, "database_routed"));
         assert_eq!(router.should_route("sub.app"), (true, "database_routed"));
+        assert_eq!(router.should_route("twitch.tv"), (true, "target_routed"));
+        assert_eq!(router.should_route("static-cdn.jtvnw.net"), (true, "target_routed"));
+        assert_eq!(router.should_route("static.twitchcdn.net"), (true, "target_routed"));
+        assert_eq!(router.should_route("video-weaver.arn03.hls.ttvnw.net"), (true, "target_routed"));
         assert_eq!(router.should_route("unknown.xyz"), (false, "default_direct"));
 
         let _ = fs::remove_dir_all(&temp_dir);

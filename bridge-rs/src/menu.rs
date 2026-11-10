@@ -852,6 +852,15 @@ pub fn cmd_remove_all(base_dir: &Path) -> bool {
     cmd_remove_strategy();
     cmd_stop(base_dir);
     cmd_fix_proxy();
+    let _ = Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            "name=Zapret TV Bridge - Block QUIC (UDP 443)",
+        ])
+        .output();
     println!("\n[+] Все службы успешно остановлены и удалены из системы.\n");
     true
 }
@@ -1153,9 +1162,11 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
     );
 
     let _ = std::fs::write(&vbs_path, &vbs_content);
-    let _ = std::fs::write(&startup_vbs, &vbs_content);
+    // Remove duplicate/legacy entries from Startup folder to prevent clutter in Task Manager
+    let _ = std::fs::remove_file(&shortcut_path);
+    let _ = std::fs::remove_file(&startup_vbs);
 
-    // 1. Register in HKCU Run key (works 100% reliably on all Windows systems)
+    // 1. Register in HKCU Run key (primary standard Windows autostart)
     let vbs_cmd = format!("wscript.exe \"{}\"", vbs_path.to_string_lossy());
     let _ = Command::new("reg")
         .args(&[
@@ -1169,23 +1180,6 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
             &vbs_cmd,
             "/f",
         ])
-        .output();
-
-    // 2. Create shortcut in Startup folder via PowerShell
-    let ps_cmd = format!(
-        "$ws = New-Object -ComObject WScript.Shell; \
-         $s = $ws.CreateShortcut('{}'); \
-         $s.TargetPath = 'wscript.exe'; \
-         $s.Arguments = '\"{}\"'; \
-         $s.WorkingDirectory = '{}'; \
-         $s.WindowStyle = 7; \
-         $s.Save()",
-        shortcut_path.to_string_lossy().replace('\'', "''"),
-        vbs_path.to_string_lossy().replace('\'', "''"),
-        norm_base.replace('\'', "''")
-    );
-    let _ = Command::new("powershell")
-        .args(&["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_cmd])
         .output();
 
     // 3. Register in Task Scheduler directly (runs with highest admin privileges if elevated)
@@ -1237,7 +1231,32 @@ pub fn cmd_firewall() {
             ])
             .output();
     }
-    println!("[+] Правила Брандмауэра успешно добавлены (порты 8080, 1080 и 1443 открыты).");
+
+    // Outbound rule: Block UDP 443 (QUIC / HTTP3) to prevent video streaming buffering stalls
+    let _ = Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            "name=Zapret TV Bridge - Block QUIC (UDP 443)",
+        ])
+        .output();
+    let _ = Command::new("netsh")
+        .args(&[
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            "name=Zapret TV Bridge - Block QUIC (UDP 443)",
+            "dir=out",
+            "action=block",
+            "protocol=UDP",
+            "remoteport=443",
+        ])
+        .output();
+
+    println!("[+] Правила Брандмауэра успешно добавлены (порты 8080, 1080, 1443 открыты, UDP 443/QUIC ограничен для плавного стриминга).");
 }
 
 /// Clears Windows System Proxy for direct system connection.

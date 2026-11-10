@@ -822,6 +822,12 @@ class ZapretTVBridge:
         shExpMatch(hostLower, "*youtubei.googleapis.com*") ||
         shExpMatch(hostLower, "*fonts.googleapis.com*") ||
         shExpMatch(hostLower, "*jnn-pa.googleapis.com*") ||
+        shExpMatch(hostLower, "*twitch.tv*") ||
+        shExpMatch(hostLower, "*ttvnw.net*") ||
+        shExpMatch(hostLower, "*jtvnw.net*") ||
+        shExpMatch(hostLower, "*twitchcdn.net*") ||
+        shExpMatch(hostLower, "*ext-twitch.tv*") ||
+        shExpMatch(hostLower, "*live-video.net*") ||
         shExpMatch(hostLower, "*pornhub*") ||
         shExpMatch(hostLower, "*phncdn*") ||
         shExpMatch(hostLower, "*phprcdn*") ||

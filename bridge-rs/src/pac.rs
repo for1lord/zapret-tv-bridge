@@ -23,6 +23,10 @@ r#"function FindProxyForURL(url, host) {{
         shExpMatch(hostLower, "*jnn-pa.googleapis.com*") ||
         shExpMatch(hostLower, "*twitch.tv*") ||
         shExpMatch(hostLower, "*ttvnw.net*") ||
+        shExpMatch(hostLower, "*jtvnw.net*") ||
+        shExpMatch(hostLower, "*twitchcdn.net*") ||
+        shExpMatch(hostLower, "*ext-twitch.tv*") ||
+        shExpMatch(hostLower, "*live-video.net*") ||
         shExpMatch(hostLower, "*pornhub*") ||
         shExpMatch(hostLower, "*phncdn*") ||
         shExpMatch(hostLower, "*phprcdn*") ||
@@ -238,6 +242,10 @@ mod tests {
         assert!(script.contains("function FindProxyForURL(url, host)"));
         assert!(script.contains("*googlevideo.com*"));
         assert!(script.contains("*youtube.com*"));
+        assert!(script.contains("*twitch.tv*"));
+        assert!(script.contains("*ttvnw.net*"));
+        assert!(script.contains("*jtvnw.net*"));
+        assert!(script.contains("*twitchcdn.net*"));
         assert!(script.contains("*discord*"));
         assert!(script.contains("return \"DIRECT\";"));
     }
