@@ -145,12 +145,16 @@ r#"function FindProxyForURL(url, host) {{
     if (shExpMatch(hostLower, "*rutracker*") ||
         shExpMatch(hostLower, "*rutor*") ||
         shExpMatch(hostLower, "*nnmclub*") ||
-        shExpMatch(hostLower, "*flibusta*")) {{
+        shExpMatch(hostLower, "*flibusta*") ||
+        shExpMatch(hostLower, "*animevost*") ||
+        shExpMatch(hostLower, "*anilibria*") ||
+        shExpMatch(hostLower, "*animedia*") ||
+        shExpMatch(hostLower, "*jut.su*")) {{
         return proxy;
     }}
 
-    // Default: Direct connection for remaining unlisted destinations
-    return "DIRECT";
+    // Default: Route all unlisted / foreign traffic through Bridge Smart Router
+    return proxy;
 }}
 "#,
         host = proxy_host,

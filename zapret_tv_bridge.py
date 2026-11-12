@@ -944,12 +944,16 @@ class ZapretTVBridge:
     if (shExpMatch(hostLower, "*rutracker*") ||
         shExpMatch(hostLower, "*rutor*") ||
         shExpMatch(hostLower, "*nnmclub*") ||
-        shExpMatch(hostLower, "*flibusta*")) {{
+        shExpMatch(hostLower, "*flibusta*") ||
+        shExpMatch(hostLower, "*animevost*") ||
+        shExpMatch(hostLower, "*anilibria*") ||
+        shExpMatch(hostLower, "*animedia*") ||
+        shExpMatch(hostLower, "*jut.su*")) {{
         return proxy;
     }}
 
-    // All other traffic -> DIRECT
-    return "DIRECT";
+    // All unlisted / foreign traffic -> route through Bridge Smart Router
+    return proxy;
 }}
 """
         return pac_body
