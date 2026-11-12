@@ -3,6 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use parking_lot::RwLock;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -150,6 +151,88 @@ pub fn is_valid_candidate_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// Queries a public DNS server directly over TCP (RFC 7766) for IPv4 (A) records.
+/// Bypasses ISP UDP 53 interception and spoofed NXDOMAIN / blackhole responses.
+pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
+    let mut packet = Vec::with_capacity(512);
+    // Header: Transaction ID (0x1234), Flags (0x0100 standard query), QDCOUNT=1, ANCOUNT=0, NSCOUNT=0, ARCOUNT=0
+    packet.extend_from_slice(&[0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+    for part in hostname.split('.') {
+        let b = part.as_bytes();
+        if b.is_empty() || b.len() > 63 {
+            return None;
+        }
+        packet.push(b.len() as u8);
+        packet.extend_from_slice(b);
+    }
+    packet.push(0x00);
+    // QTYPE: 1 (A), QCLASS: 1 (IN)
+    packet.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+
+    let target = format!("{server_ip}:53");
+    let mut stream = timeout(Duration::from_millis(1500), TcpStream::connect(&target)).await.ok()?.ok()?;
+
+    let len = packet.len() as u16;
+    let mut tcp_msg = Vec::with_capacity(2 + packet.len());
+    tcp_msg.extend_from_slice(&len.to_be_bytes());
+    tcp_msg.extend_from_slice(&packet);
+
+    timeout(Duration::from_millis(1500), stream.write_all(&tcp_msg)).await.ok()?.ok()?;
+
+    let mut len_buf = [0u8; 2];
+    timeout(Duration::from_millis(2000), stream.read_exact(&mut len_buf)).await.ok()?.ok()?;
+    let resp_len = u16::from_be_bytes(len_buf) as usize;
+    if resp_len < 12 || resp_len > 4096 {
+        return None;
+    }
+
+    let mut buf = vec![0u8; resp_len];
+    timeout(Duration::from_millis(2000), stream.read_exact(&mut buf)).await.ok()?.ok()?;
+
+    let ancount = u16::from_be_bytes([buf[6], buf[7]]);
+    if ancount == 0 {
+        return None;
+    }
+
+    let mut idx = packet.len();
+    let mut ips = Vec::new();
+
+    for _ in 0..ancount {
+        if idx >= resp_len {
+            break;
+        }
+        if (buf[idx] & 0xC0) == 0xC0 {
+            idx += 2;
+        } else {
+            while idx < resp_len && buf[idx] != 0 {
+                idx += (buf[idx] as usize) + 1;
+            }
+            idx += 1;
+        }
+
+        if idx + 10 > resp_len {
+            break;
+        }
+
+        let rtype = u16::from_be_bytes([buf[idx], buf[idx + 1]]);
+        let rdlen = u16::from_be_bytes([buf[idx + 8], buf[idx + 9]]) as usize;
+        idx += 10;
+
+        if rtype == 1 && rdlen == 4 && idx + 4 <= resp_len {
+            let ipv4 = Ipv4Addr::new(buf[idx], buf[idx + 1], buf[idx + 2], buf[idx + 3]);
+            ips.push(ipv4);
+        }
+        idx += rdlen;
+    }
+
+    if ips.is_empty() {
+        None
+    } else {
+        Some(ips)
+    }
+}
+
 /// Queries a public DNS server directly over UDP for IPv4 (A) records.
 pub async fn query_dns_udp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
     let mut packet = Vec::with_capacity(512);
@@ -223,7 +306,11 @@ pub async fn query_dns_udp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Ad
 
 /// Resolves candidate IP addresses for a given hostname.
 ///
-/// Checks in-memory DNS cache first. On miss, resolves via direct public DNS and system resolver.
+/// Priority:
+/// 1. In-memory DNS cache
+/// 2. Direct public DNS over TCP (1.1.1.1, 8.8.8.8) to bypass ISP UDP 53 interception
+/// 3. Direct public DNS over UDP
+/// 4. System OS resolver fallback
 pub async fn resolve_candidate_ips(hostname: &str) -> Vec<IpAddr> {
     if let Ok(ip) = hostname.parse::<IpAddr>() {
         return if is_valid_candidate_ip(ip) { vec![ip] } else { Vec::new() };
@@ -238,9 +325,9 @@ pub async fn resolve_candidate_ips(hostname: &str) -> Vec<IpAddr> {
         }
     }
 
-    // 2. Query direct public DNS resolvers (1.1.1.1, 8.8.8.8) for unpoisoned fast CDN endpoints
+    // 2. Query direct public DNS resolvers over TCP (1.1.1.1, 8.8.8.8) to bypass ISP UDP 53 interception
     for pub_dns in &["1.1.1.1", "8.8.8.8"] {
-        if let Some(ips) = query_dns_udp(pub_dns, hostname).await {
+        if let Some(ips) = query_dns_tcp(pub_dns, hostname).await {
             for ip4 in ips {
                 let ip = IpAddr::V4(ip4);
                 if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
@@ -253,13 +340,32 @@ pub async fn resolve_candidate_ips(hostname: &str) -> Vec<IpAddr> {
         }
     }
 
-    // 3. Fallback to system resolver via lookup_host for LAN/intranet or other domains
-    let addr_str = format!("{hostname}:443");
-    if let Ok(Ok(addrs)) = timeout(Duration::from_millis(2500), tokio::net::lookup_host(&addr_str)).await {
-        for sa in addrs {
-            let ip = sa.ip();
-            if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
-                candidates.push(ip);
+    // 3. Fallback: Query UDP if TCP did not return answers
+    if candidates.is_empty() {
+        for pub_dns in &["1.1.1.1", "8.8.8.8"] {
+            if let Some(ips) = query_dns_udp(pub_dns, hostname).await {
+                for ip4 in ips {
+                    let ip = IpAddr::V4(ip4);
+                    if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
+                        candidates.push(ip);
+                    }
+                }
+                if !candidates.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    // 4. Fallback to system resolver via lookup_host for LAN/intranet or other domains
+    if candidates.is_empty() {
+        let addr_str = format!("{hostname}:443");
+        if let Ok(Ok(addrs)) = timeout(Duration::from_millis(2500), tokio::net::lookup_host(addr_str)).await {
+            for sa in addrs {
+                let ip = sa.ip();
+                if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
+                    candidates.push(ip);
+                }
             }
         }
     }

@@ -54,6 +54,8 @@ if /i "%CLI_CMD%"=="stop" goto :opt_remove_all
 if /i "%CLI_CMD%"=="optimize-browsers" goto :opt_optimize_browsers
 if /i "%CLI_CMD%"=="fix-browsers" goto :opt_optimize_browsers
 if /i "%CLI_CMD%"=="restart" goto :opt_restart
+if /i "%CLI_CMD%"=="sync-rules" goto :opt_sync_rules
+if /i "%CLI_CMD%"=="parse-rules" goto :opt_sync_rules
 
 :menu_loop
 call :refresh_status
@@ -83,13 +85,14 @@ echo      4. Автозагрузка Windows              !STARTUP_STATUS!
 echo      5. Открыть веб-панель в браузере
 echo      6. Оптимизировать скорость в браузерах (Edge, Chrome, Yandex)
 echo      7. Перезапустить шлюз (Restart Bridge)
+echo      8. Синхронизировать базу правил (660,000+ доменов)
 echo   --------------------------------------------------
 echo      0. Выход
 echo   --------------------------------------------------
 echo.
 
 set "CHOICE="
-set /p CHOICE="   Выберите пункт [0-7]: "
+set /p CHOICE="   Выберите пункт [0-8]: "
 
 if not defined CHOICE goto :menu_loop
 if "%CHOICE%"=="1" goto :opt_install_all
@@ -99,6 +102,7 @@ if "%CHOICE%"=="4" goto :opt_startup
 if "%CHOICE%"=="5" goto :opt_dashboard
 if "%CHOICE%"=="6" goto :opt_optimize_browsers
 if "%CHOICE%"=="7" goto :opt_restart
+if "%CHOICE%"=="8" goto :opt_sync_rules
 if "%CHOICE%"=="0" exit /b
 goto :menu_loop
 
@@ -305,6 +309,23 @@ if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --restart
 ) else (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --restart
+)
+if defined CLI_CMD exit /b
+echo.
+pause
+goto :menu_loop
+
+:: -----------------------------------------------------------------------------
+:: 8. SYNCHRONIZE RULES (660,000+ DOMAINS)
+:: -----------------------------------------------------------------------------
+:opt_sync_rules
+cls
+if "!USE_STANDALONE!"=="1" (
+    "%BRIDGE_EXE%" --parse-rules
+) else (
+    python.exe "%PROJECT_DIR%parse_rules.py"
+    sc stop zapret >nul 2>&1
+    sc start zapret >nul 2>&1
 )
 if defined CLI_CMD exit /b
 echo.

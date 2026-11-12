@@ -53,6 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu::cmd_optimize_browsers();
         return Ok(());
     }
+    if args.iter().any(|a| a == "--parse-rules" || a == "--sync-rules") {
+        menu::ensure_admin(&args);
+        menu::cmd_sync_rules(&base_dir);
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--startup-enable") {
         menu::ensure_admin(&args);
         menu::cmd_startup(true, &base_dir);

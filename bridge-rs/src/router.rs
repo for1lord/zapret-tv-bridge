@@ -474,6 +474,27 @@ pub struct SmartRouter {
     database_v4: Vec<Ipv4Interval>,
 }
 
+static RELOAD_NOTIFY: std::sync::LazyLock<tokio::sync::mpsc::UnboundedSender<()>> = std::sync::LazyLock::new(|| {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+    tokio::spawn(async move {
+        while rx.recv().await.is_some() {
+            tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+            while rx.try_recv().is_ok() {}
+
+            println!("[SmartRouter] Reloading Zapret DPI service with updated hostlists...");
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "sc stop zapret && sc start zapret"])
+                    .creation_flags(0x08000000)
+                    .output();
+            }
+        }
+    });
+    tx
+});
+
 impl SmartRouter {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
         let base_dir = base_dir.as_ref().to_path_buf();
@@ -1342,6 +1363,7 @@ impl SmartRouter {
         if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(user_path) {
             let _ = writeln!(file, "{domain}");
             println!("[SmartRouter] Domain {domain} dynamically registered for acceleration");
+            let _ = RELOAD_NOTIFY.send(());
         }
     }
 

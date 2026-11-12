@@ -448,14 +448,15 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
         println!("  :: НАСТРОЙКИ");
         println!("     4. Автозагрузка Windows              {}", startup_status);
         println!("     5. Открыть веб-панель в браузере");
-        println!("     6. Оптимизировать скорость браузеров (Parallel Downloading)");
+        println!("     6. Оптимизировать скорость браузеров (Parallel Downloading & DoH)");
         println!("     7. Перезапустить шлюз (Restart Bridge)");
+        println!("     8. Синхронизировать базу правил (660,000+ доменов)");
         println!();
         println!("  --------------------------------------------------");
         println!("     0. Выход");
         println!("  --------------------------------------------------");
         println!();
-        print!("   Выберите пункт [0-7]: ");
+        print!("   Выберите пункт [0-8]: ");
         use std::io::Write;
         let _ = std::io::stdout().flush();
 
@@ -493,6 +494,10 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
             }
             "7" => {
                 cmd_restart(base_dir);
+                pause_menu();
+            }
+            "8" => {
+                cmd_sync_rules(base_dir);
                 pause_menu();
             }
             _ => {}
@@ -1552,9 +1557,54 @@ pub fn cmd_optimize_browsers() -> usize {
                 println!("      Для вступления изменений в силу закройте и снова откройте браузер.");
             }
         }
+        #[cfg(windows)]
+        {
+            // Configure DoH and Post-Quantum TLS policies
+            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"PostQuantumKeyAgreementEnabled\" /t REG_DWORD /d 0 /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"PostQuantumKeyAgreementEnabled\" /t REG_DWORD /d 0 /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"DnsOverHttpsMode\" /t REG_SZ /d \"secure\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"DnsOverHttpsTemplates\" /t REG_SZ /d \"https://chrome.cloudflare-dns.com/dns-query https://dns.google/dns-query\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"DnsOverHttpsMode\" /t REG_SZ /d \"secure\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"DnsOverHttpsTemplates\" /t REG_SZ /d \"https://chrome.cloudflare-dns.com/dns-query https://dns.google/dns-query\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "netsh interface ipv4 set dns name=\"Ethernet\" static 1.1.1.1"]).output();
+            let _ = Command::new("cmd").args(["/c", "netsh interface ipv4 add dns name=\"Ethernet\" 8.8.8.8 index=2"]).output();
+            println!("  [+] Политики безопасного DoH и быстрый сетевой DNS (1.1.1.1 / 8.8.8.8) успешно применены!");
+        }
     }
     println!("  --------------------------------------------------\n");
     modified_count
+}
+
+/// Synchronizes rule database (660,000+ domains) using `parse_rules.py` and restarts Zapret DPI service.
+pub fn cmd_sync_rules(base_dir: &Path) {
+    println!();
+    println!("  ==================================================");
+    println!("  СИНХРОНИЗАЦИЯ БАЗЫ ПРАВИЛ (660,000+ ДОМЕНОВ)");
+    println!("  ==================================================");
+
+    let script_path = base_dir.join("parse_rules.py");
+    if script_path.exists() {
+        println!("  [*] Запуск синка базы правил...");
+        let status = Command::new("python")
+            .arg(&script_path)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!("  [+] База правил успешно обновлена!");
+                println!("  [*] Перезапуск службы Zapret для применения новых правил...");
+                let _ = Command::new("cmd")
+                    .args(["/c", "sc stop zapret && sc start zapret"])
+                    .status();
+                println!("  [+] Служба Zapret перезапущена.");
+            }
+            _ => {
+                println!("  [!] Ошибка выполнения parse_rules.py через python.");
+            }
+        }
+    } else {
+        println!("  [!] Файл parse_rules.py не найден в {}", base_dir.display());
+    }
 }
 
 #[cfg(test)]

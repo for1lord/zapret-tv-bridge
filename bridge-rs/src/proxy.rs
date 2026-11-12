@@ -271,10 +271,19 @@ pub async fn handle_http_connect(
         }
     };
 
-    let (_should_route, _reason) = router.should_route(&host);
+    let (_should_route, reason) = router.should_route(&host);
+    if reason != "exclude_direct" {
+        router.auto_add_domain(&host);
+    }
 
     // Fast failover connection via DNS candidate cache or direct lookup
-    let remote_conn = connect_to_remote(&host, port).await;
+    let remote_conn = match connect_to_remote(&host, port).await {
+        Some(conn) => Some(conn),
+        None => {
+            crate::dns::GLOBAL_DNS_CACHE.remove(&host);
+            connect_to_remote(&host, port).await
+        }
+    };
     let mut remote = match remote_conn {
         Some((stream, _)) => stream,
         None => {
@@ -337,9 +346,18 @@ pub async fn handle_plain_http(
     metrics: Arc<ProxyMetrics>,
 ) -> io::Result<()> {
     let (host, port) = parse_host_port(target, 80);
-    let (_should_route, _reason) = router.should_route(&host);
+    let (_should_route, reason) = router.should_route(&host);
+    if reason != "exclude_direct" {
+        router.auto_add_domain(&host);
+    }
 
-    let remote_conn = connect_to_remote(&host, port).await;
+    let remote_conn = match connect_to_remote(&host, port).await {
+        Some(conn) => Some(conn),
+        None => {
+            crate::dns::GLOBAL_DNS_CACHE.remove(&host);
+            connect_to_remote(&host, port).await
+        }
+    };
     let mut remote = match remote_conn {
         Some((stream, _)) => stream,
         None => {
