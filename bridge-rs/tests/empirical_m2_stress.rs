@@ -72,9 +72,18 @@ fn test_empirical_target_subnet_boundaries() {
     let above_142_250 = IpAddr::V4(Ipv4Addr::new(142, 252, 0, 0));
 
     assert_ne!(router.should_route_ip(below_142_250).1, "target_routed");
-    assert_eq!(router.should_route_ip(start_142_250), (true, "target_routed"));
-    assert_eq!(router.should_route_ip(mid_142_250_a), (true, "target_routed"));
-    assert_eq!(router.should_route_ip(mid_142_250_b), (true, "target_routed"));
+    assert_eq!(
+        router.should_route_ip(start_142_250),
+        (true, "target_routed")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_142_250_a),
+        (true, "target_routed")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_142_250_b),
+        (true, "target_routed")
+    );
     assert_eq!(router.should_route_ip(end_142_250), (true, "target_routed"));
     assert_ne!(router.should_route_ip(above_142_250).1, "target_routed");
 
@@ -84,11 +93,26 @@ fn test_empirical_target_subnet_boundaries() {
     assert_eq!(iv_discord.end, u32::from(Ipv4Addr::new(66, 22, 199, 255)));
 
     let discord_slice = [iv_discord];
-    assert!(!contains_ipv4(&discord_slice, u32::from(Ipv4Addr::new(66, 22, 195, 255))));
-    assert!(contains_ipv4(&discord_slice, u32::from(Ipv4Addr::new(66, 22, 196, 0))));
-    assert!(contains_ipv4(&discord_slice, u32::from(Ipv4Addr::new(66, 22, 197, 128))));
-    assert!(contains_ipv4(&discord_slice, u32::from(Ipv4Addr::new(66, 22, 199, 255))));
-    assert!(!contains_ipv4(&discord_slice, u32::from(Ipv4Addr::new(66, 22, 200, 0))));
+    assert!(!contains_ipv4(
+        &discord_slice,
+        u32::from(Ipv4Addr::new(66, 22, 195, 255))
+    ));
+    assert!(contains_ipv4(
+        &discord_slice,
+        u32::from(Ipv4Addr::new(66, 22, 196, 0))
+    ));
+    assert!(contains_ipv4(
+        &discord_slice,
+        u32::from(Ipv4Addr::new(66, 22, 197, 128))
+    ));
+    assert!(contains_ipv4(
+        &discord_slice,
+        u32::from(Ipv4Addr::new(66, 22, 199, 255))
+    ));
+    assert!(!contains_ipv4(
+        &discord_slice,
+        u32::from(Ipv4Addr::new(66, 22, 200, 0))
+    ));
 
     let below_66_22 = IpAddr::V4(Ipv4Addr::new(66, 22, 195, 255));
     let start_66_22 = IpAddr::V4(Ipv4Addr::new(66, 22, 196, 0));
@@ -100,9 +124,18 @@ fn test_empirical_target_subnet_boundaries() {
     assert_ne!(router.should_route_ip(below_66_22).1, "target_routed");
     assert_eq!(router.should_route_ip(start_66_22), (true, "target_routed"));
     assert_eq!(router.should_route_ip(mid_66_22), (true, "target_routed"));
-    assert_eq!(router.should_route_ip(end_66_22_single), (true, "target_routed"));
-    assert_eq!(router.should_route_ip(end_66_22_merged), (true, "target_routed"));
-    assert_ne!(router.should_route_ip(above_66_22_merged).1, "target_routed");
+    assert_eq!(
+        router.should_route_ip(end_66_22_single),
+        (true, "target_routed")
+    );
+    assert_eq!(
+        router.should_route_ip(end_66_22_merged),
+        (true, "target_routed")
+    );
+    assert_ne!(
+        router.should_route_ip(above_66_22_merged).1,
+        "target_routed"
+    );
 
     // 3. Target Subnet: 104.16.0.0/13 (Cloudflare & Media CDNs)
     let iv_cf = parse_ipv4_cidr("104.16.0.0/13").expect("Parse 104.16.0.0/13");
@@ -110,11 +143,26 @@ fn test_empirical_target_subnet_boundaries() {
     assert_eq!(iv_cf.end, u32::from(Ipv4Addr::new(104, 23, 255, 255)));
 
     let cf_slice = [iv_cf];
-    assert!(!contains_ipv4(&cf_slice, u32::from(Ipv4Addr::new(104, 15, 255, 255))));
-    assert!(contains_ipv4(&cf_slice, u32::from(Ipv4Addr::new(104, 16, 0, 0))));
-    assert!(contains_ipv4(&cf_slice, u32::from(Ipv4Addr::new(104, 20, 0, 1))));
-    assert!(contains_ipv4(&cf_slice, u32::from(Ipv4Addr::new(104, 23, 255, 255))));
-    assert!(!contains_ipv4(&cf_slice, u32::from(Ipv4Addr::new(104, 24, 0, 0))));
+    assert!(!contains_ipv4(
+        &cf_slice,
+        u32::from(Ipv4Addr::new(104, 15, 255, 255))
+    ));
+    assert!(contains_ipv4(
+        &cf_slice,
+        u32::from(Ipv4Addr::new(104, 16, 0, 0))
+    ));
+    assert!(contains_ipv4(
+        &cf_slice,
+        u32::from(Ipv4Addr::new(104, 20, 0, 1))
+    ));
+    assert!(contains_ipv4(
+        &cf_slice,
+        u32::from(Ipv4Addr::new(104, 23, 255, 255))
+    ));
+    assert!(!contains_ipv4(
+        &cf_slice,
+        u32::from(Ipv4Addr::new(104, 24, 0, 0))
+    ));
 
     let below_104_16 = IpAddr::V4(Ipv4Addr::new(104, 15, 255, 255));
     let start_104_16 = IpAddr::V4(Ipv4Addr::new(104, 16, 0, 0));
@@ -124,11 +172,23 @@ fn test_empirical_target_subnet_boundaries() {
     let above_104_16_merged = IpAddr::V4(Ipv4Addr::new(104, 28, 0, 0));
 
     assert_ne!(router.should_route_ip(below_104_16).1, "target_routed");
-    assert_eq!(router.should_route_ip(start_104_16), (true, "target_routed"));
+    assert_eq!(
+        router.should_route_ip(start_104_16),
+        (true, "target_routed")
+    );
     assert_eq!(router.should_route_ip(mid_104_16), (true, "target_routed"));
-    assert_eq!(router.should_route_ip(end_104_16_single), (true, "target_routed"));
-    assert_eq!(router.should_route_ip(end_104_16_merged), (true, "target_routed"));
-    assert_ne!(router.should_route_ip(above_104_16_merged).1, "target_routed");
+    assert_eq!(
+        router.should_route_ip(end_104_16_single),
+        (true, "target_routed")
+    );
+    assert_eq!(
+        router.should_route_ip(end_104_16_merged),
+        (true, "target_routed")
+    );
+    assert_ne!(
+        router.should_route_ip(above_104_16_merged).1,
+        "target_routed"
+    );
 }
 
 #[test]
@@ -147,9 +207,18 @@ fn test_empirical_exclude_subnet_boundaries() {
     let above_192_168 = IpAddr::V4(Ipv4Addr::new(192, 169, 0, 0));
 
     assert_ne!(router.should_route_ip(below_192_168).1, "exclude_direct");
-    assert_eq!(router.should_route_ip(start_192_168), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(mid_192_168), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(end_192_168), (false, "exclude_direct"));
+    assert_eq!(
+        router.should_route_ip(start_192_168),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_192_168),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(end_192_168),
+        (false, "exclude_direct")
+    );
     assert_ne!(router.should_route_ip(above_192_168).1, "exclude_direct");
 
     // 2. Exclude Subnet: 10.0.0.0/8 (Private RFC 1918)
@@ -192,9 +261,18 @@ fn test_empirical_ipv6_interval_boundaries() {
     let exact_v6_loopback: IpAddr = "::1".parse().unwrap();
     let above_v6_loopback: IpAddr = "::2".parse().unwrap();
 
-    assert_ne!(router.should_route_ip(below_v6_loopback).1, "exclude_direct");
-    assert_eq!(router.should_route_ip(exact_v6_loopback), (false, "exclude_direct"));
-    assert_ne!(router.should_route_ip(above_v6_loopback).1, "exclude_direct");
+    assert_ne!(
+        router.should_route_ip(below_v6_loopback).1,
+        "exclude_direct"
+    );
+    assert_eq!(
+        router.should_route_ip(exact_v6_loopback),
+        (false, "exclude_direct")
+    );
+    assert_ne!(
+        router.should_route_ip(above_v6_loopback).1,
+        "exclude_direct"
+    );
 
     // 2. IPv6 Unique Local Address: fc00::/7 (RFC 4193)
     let below_fc00: IpAddr = "fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap();
@@ -205,9 +283,18 @@ fn test_empirical_ipv6_interval_boundaries() {
     let above_fc00: IpAddr = "fe00::".parse().unwrap();
 
     assert_ne!(router.should_route_ip(below_fc00).1, "exclude_direct");
-    assert_eq!(router.should_route_ip(start_fc00), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(mid_fc00_a), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(mid_fc00_b), (false, "exclude_direct"));
+    assert_eq!(
+        router.should_route_ip(start_fc00),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_fc00_a),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_fc00_b),
+        (false, "exclude_direct")
+    );
     assert_eq!(router.should_route_ip(end_fc00), (false, "exclude_direct"));
     assert_ne!(router.should_route_ip(above_fc00).1, "exclude_direct");
 
@@ -221,10 +308,22 @@ fn test_empirical_ipv6_interval_boundaries() {
     let above_fe80: IpAddr = "fec0::".parse().unwrap();
 
     assert_ne!(router.should_route_ip(below_fe80).1, "exclude_direct");
-    assert_eq!(router.should_route_ip(start_fe80), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(mid_fe80_a), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(mid_fe80_b), (false, "exclude_direct"));
-    assert_eq!(router.should_route_ip(mid_fe80_c), (false, "exclude_direct"));
+    assert_eq!(
+        router.should_route_ip(start_fe80),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_fe80_a),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_fe80_b),
+        (false, "exclude_direct")
+    );
+    assert_eq!(
+        router.should_route_ip(mid_fe80_c),
+        (false, "exclude_direct")
+    );
     assert_eq!(router.should_route_ip(end_fe80), (false, "exclude_direct"));
     assert_ne!(router.should_route_ip(above_fe80).1, "exclude_direct");
 }
@@ -280,7 +379,10 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
     println!("\n=======================================================");
     println!(" [Benchmark 1: 1M CIDR IP Queries (Feature F12)]");
     println!(" Total queries:           {}", count);
-    println!(" Duration:                {:.2} ms", elapsed_ip.as_secs_f64() * 1000.0);
+    println!(
+        " Duration:                {:.2} ms",
+        elapsed_ip.as_secs_f64() * 1000.0
+    );
     println!(" Average latency:         {:.2} ns / query", avg_ns_ip);
     println!(" Throughput:              {:.2} queries / second", qps_ip);
     println!(" Private Commit Delta:    {} KB", priv_delta_kb);
@@ -330,7 +432,10 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
     println!("\n=======================================================");
     println!(" [Benchmark 2: 1M Pure Mmap Binary Searches (Feature F10)]");
     println!(" Total queries:           {}", count);
-    println!(" Duration:                {:.2} ms", elapsed_mmap.as_secs_f64() * 1000.0);
+    println!(
+        " Duration:                {:.2} ms",
+        elapsed_mmap.as_secs_f64() * 1000.0
+    );
     println!(" Average latency:         {:.2} ns / query", avg_ns_mmap);
     println!(" Throughput:              {:.2} queries / second", qps_mmap);
     println!("=======================================================\n");
@@ -364,7 +469,10 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
     println!("\n=======================================================");
     println!(" [Benchmark 3: 1M Pure Subnet Interval Checks (contains_ipv4)]");
     println!(" Total queries:           {}", count);
-    println!(" Duration:                {:.2} ms", elapsed_iv.as_secs_f64() * 1000.0);
+    println!(
+        " Duration:                {:.2} ms",
+        elapsed_iv.as_secs_f64() * 1000.0
+    );
     println!(" Average latency:         {:.2} ns / query", avg_ns_iv);
     println!(" Throughput:              {:.2} queries / second", qps_iv);
     println!("=======================================================\n");
@@ -387,12 +495,19 @@ fn test_empirical_8_thread_concurrency_stress_with_auto_add() {
         return;
     }
 
-    let test_dir = std::env::temp_dir().join(format!("zprt_challenger_stress_{}", std::process::id()));
+    let test_dir =
+        std::env::temp_dir().join(format!("zprt_challenger_stress_{}", std::process::id()));
     let lists_dir = test_dir.join("lists");
     fs::create_dir_all(&lists_dir).expect("Create test lists dir");
 
-    let _ = fs::copy(base_dir.join("routing_rules.bin"), test_dir.join("routing_rules.bin"));
-    let _ = fs::copy(base_dir.join("routing_rules.json"), test_dir.join("routing_rules.json"));
+    let _ = fs::copy(
+        base_dir.join("routing_rules.bin"),
+        test_dir.join("routing_rules.bin"),
+    );
+    let _ = fs::copy(
+        base_dir.join("routing_rules.json"),
+        test_dir.join("routing_rules.json"),
+    );
 
     if let Ok(entries) = fs::read_dir(base_dir.join("lists")) {
         for entry in entries.filter_map(Result::ok) {
@@ -491,7 +606,11 @@ fn test_empirical_8_thread_concurrency_stress_with_auto_add() {
 
     for (i, h) in handles.into_iter().enumerate() {
         let res = h.join();
-        assert!(res.is_ok(), "Thread #{} panicked during concurrency stress test!", i);
+        assert!(
+            res.is_ok(),
+            "Thread #{} panicked during concurrency stress test!",
+            i
+        );
     }
 
     let total_reads = read_queries_completed.load(Ordering::Relaxed);

@@ -10,7 +10,9 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use common::{http_connect_tunnel, socks5_connect_ipv4, socks5_handshake, MockEchoServer, MockHttpServer};
+use common::{
+    http_connect_tunnel, socks5_connect_ipv4, socks5_handshake, MockEchoServer, MockHttpServer,
+};
 use zapret_tv_bridge_rs::metrics::ProxyMetrics;
 use zapret_tv_bridge_rs::proxy;
 use zapret_tv_bridge_rs::router::SmartRouter;
@@ -196,7 +198,8 @@ async fn test_tier1_web_favicon_204_no_content() {
 #[tokio::test]
 async fn test_tier1_web_unknown_path_returns_404() {
     let server = WebTestServer::start().await;
-    let req = "GET /unregistered_subpath_test HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req =
+        "GET /unregistered_subpath_test HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = server.request(req).await.expect("Request failed");
 
     assert_eq!(status, 404);
@@ -401,7 +404,8 @@ async fn test_tier1_health_uptime_monotonic_increase() {
 #[tokio::test]
 async fn test_tier1_mobileconfig_supercell_endpoint() {
     let server = WebTestServer::start().await;
-    let req = "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req =
+        "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status, headers, _body) = server.request(req).await.expect("Request failed");
 
     assert_eq!(status, 200);
@@ -417,7 +421,8 @@ async fn test_tier1_mobileconfig_supercell_endpoint() {
 #[tokio::test]
 async fn test_tier1_mobileconfig_supercell_xml_plist() {
     let server = WebTestServer::start().await;
-    let req = "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req =
+        "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = server.request(req).await.expect("Request failed");
 
     assert_eq!(status, 200);
@@ -432,7 +437,8 @@ async fn test_tier1_mobileconfig_supercell_xml_plist() {
 #[tokio::test]
 async fn test_tier1_mobileconfig_nullsproxy_endpoint() {
     let server = WebTestServer::start().await;
-    let req = "GET /nullsproxy.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req =
+        "GET /nullsproxy.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status, headers, _body) = server.request(req).await.expect("Request failed");
 
     assert_eq!(status, 200);
@@ -448,7 +454,8 @@ async fn test_tier1_mobileconfig_nullsproxy_endpoint() {
 #[tokio::test]
 async fn test_tier1_mobileconfig_nullsproxy_xml_plist() {
     let server = WebTestServer::start().await;
-    let req = "GET /nullsproxy.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req =
+        "GET /nullsproxy.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = server.request(req).await.expect("Request failed");
 
     assert_eq!(status, 200);
@@ -469,7 +476,8 @@ async fn test_tier1_mobileconfig_disk_override() {
     std::fs::write(temp_dir.join("supercell.mobileconfig"), custom_profile).unwrap();
 
     let server = WebTestServer::start_with_base_dir(temp_dir.clone()).await;
-    let req = "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    let req =
+        "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status, _headers, body) = server.request(req).await.expect("Request failed");
 
     assert_eq!(status, 200);
@@ -496,7 +504,10 @@ async fn test_tier1_dashboard_copyable_widgets() {
 
     assert_eq!(status, 200);
     let html = String::from_utf8_lossy(&body);
-    assert!(html.contains(&format!("http://192.168.0.50:{}/proxy.pac", server.addr.port())));
+    assert!(html.contains(&format!(
+        "http://192.168.0.50:{}/proxy.pac",
+        server.addr.port()
+    )));
     assert!(html.contains("192.168.0.50"));
     assert!(html.contains("Копировать"));
 }
@@ -654,7 +665,11 @@ async fn test_tier2_pac_legacy_path_aliases() {
 #[tokio::test]
 async fn test_tier2_mobileconfig_path_aliases() {
     let server = WebTestServer::start().await;
-    let aliases = ["/brawlstars.mobileconfig", "/clashroyale.mobileconfig", "/comss.mobileconfig"];
+    let aliases = [
+        "/brawlstars.mobileconfig",
+        "/clashroyale.mobileconfig",
+        "/comss.mobileconfig",
+    ];
     for alias in aliases {
         let req = format!("GET {alias} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
         let (status, headers, body) = server.request(&req).await.expect("Request failed");
@@ -669,7 +684,11 @@ async fn test_tier2_mobileconfig_path_aliases() {
 #[tokio::test]
 async fn test_tier2_path_traversal_sanitization() {
     let server = WebTestServer::start().await;
-    let traversal_paths = ["/../../supercell.mobileconfig", "/../Cargo.toml", "/..%2f..%2fCargo.toml"];
+    let traversal_paths = [
+        "/../../supercell.mobileconfig",
+        "/../Cargo.toml",
+        "/..%2f..%2fCargo.toml",
+    ];
     for path in traversal_paths {
         let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
         let (status, _headers, _body) = server.request(&req).await.expect("Request failed");
@@ -705,14 +724,19 @@ async fn test_tier2_http10_request_handling() {
 async fn test_tier2_head_method_request() {
     let server = WebTestServer::start().await;
     for endpoint in &["/proxy.pac", "/health", "/favicon.ico", "/"] {
-        let req = format!("HEAD {endpoint} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        let req =
+            format!("HEAD {endpoint} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
         let (status, _headers, body) = server.request(&req).await.expect("HEAD request failed");
         if *endpoint == "/favicon.ico" {
             assert_eq!(status, 204);
         } else {
             assert_eq!(status, 200, "HEAD failed for {endpoint}");
         }
-        assert_eq!(body.len(), 0, "HEAD response must have 0 body bytes for {endpoint}");
+        assert_eq!(
+            body.len(),
+            0,
+            "HEAD response must have 0 body bytes for {endpoint}"
+        );
     }
 }
 
@@ -754,7 +778,11 @@ async fn test_tier2_headers_exceeding_64kb_limit() {
     let server = WebTestServer::start().await;
     let mut oversized = String::new();
     for i in 0..190 {
-        oversized.push_str(&format!("X-Oversized-Header-{}: {}\r\n", i, "x".repeat(350)));
+        oversized.push_str(&format!(
+            "X-Oversized-Header-{}: {}\r\n",
+            i,
+            "x".repeat(350)
+        ));
     }
     let req = format!(
         "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n{}Connection: close\r\n\r\n",
@@ -764,7 +792,8 @@ async fn test_tier2_headers_exceeding_64kb_limit() {
     let _ = stream.write_all(req.as_bytes()).await;
     let mut buf = Vec::new();
     let _ = stream.read_to_end(&mut buf).await;
-    let (status, _headers, _body) = parse_http_response(&buf).expect("Expected valid HTTP response");
+    let (status, _headers, _body) =
+        parse_http_response(&buf).expect("Expected valid HTTP response");
     assert_eq!(status, 431, "Expected HTTP 431 for headers > 64 KB");
 }
 
@@ -773,12 +802,21 @@ async fn test_tier2_headers_exceeding_64kb_limit() {
 async fn test_tier2_abrupt_disconnect_after_get() {
     let server = WebTestServer::start().await;
     let mut stream = TcpStream::connect(server.addr).await.unwrap();
-    stream.write_all(b"GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\n").await.unwrap();
+    stream
+        .write_all(b"GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+        .await
+        .unwrap();
     // Drop immediately
     drop(stream);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(server.metrics.active_connections.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(
+        server
+            .metrics
+            .active_connections
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
 }
 
 /// T2.17: Absolute URI addressed to self is handled as local route.
@@ -819,9 +857,15 @@ async fn test_tier3_concurrent_connect_and_web_load() {
             assert_eq!(status, 200);
 
             let data = vec![0x33u8; 100 * 1024];
-            tunnel.write_all(&data).await.expect("Write to tunnel failed");
+            tunnel
+                .write_all(&data)
+                .await
+                .expect("Write to tunnel failed");
             let mut echo_buf = vec![0u8; data.len()];
-            tunnel.read_exact(&mut echo_buf).await.expect("Read from tunnel failed");
+            tunnel
+                .read_exact(&mut echo_buf)
+                .await
+                .expect("Read from tunnel failed");
             assert_eq!(echo_buf, data);
         }));
     }
@@ -888,7 +932,9 @@ async fn test_tier3_socks5_load_with_concurrent_telemetry() {
         stats_tasks.push(tokio::spawn(async move {
             let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
             stream
-                .write_all(b"GET /api/stats HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"GET /api/stats HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                )
                 .await
                 .unwrap();
             let mut buf = Vec::new();
@@ -925,14 +971,17 @@ async fn test_tier3_autodetect_multiplexing_stress() {
                     let mut stream = TcpStream::connect(s_addr).await.unwrap();
                     let auth = socks5_handshake(&mut stream, &[0x00]).await.unwrap();
                     assert_eq!(auth, 0x00);
-                    let rep = socks5_connect_ipv4(&mut stream, [127, 0, 0, 1], echo_port).await.unwrap();
+                    let rep = socks5_connect_ipv4(&mut stream, [127, 0, 0, 1], echo_port)
+                        .await
+                        .unwrap();
                     assert_eq!(rep, 0x00);
                 }
                 1 => {
                     // HTTP CONNECT (first byte 'C')
-                    let (mut tunnel, status, _) = http_connect_tunnel(s_addr, "127.0.0.1", echo_port)
-                        .await
-                        .unwrap();
+                    let (mut tunnel, status, _) =
+                        http_connect_tunnel(s_addr, "127.0.0.1", echo_port)
+                            .await
+                            .unwrap();
                     assert_eq!(status, 200);
                     tunnel.write_all(b"ping").await.unwrap();
                     let mut buf = [0u8; 4];
@@ -942,7 +991,12 @@ async fn test_tier3_autodetect_multiplexing_stress() {
                 _ => {
                     // Web GET (first byte 'G')
                     let mut stream = TcpStream::connect(s_addr).await.unwrap();
-                    stream.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n").await.unwrap();
+                    stream
+                        .write_all(
+                            b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        )
+                        .await
+                        .unwrap();
                     let mut buf = Vec::new();
                     stream.read_to_end(&mut buf).await.unwrap();
                     let (status, _, _) = parse_http_response(&buf).unwrap();
@@ -1013,7 +1067,9 @@ async fn test_tier3_error_metric_accounting() {
     // 2. HTTP CONNECT missing port
     {
         let mut s = TcpStream::connect(server.addr).await.unwrap();
-        s.write_all(b"CONNECT invalid_host HTTP/1.1\r\nHost: invalid\r\n\r\n").await.unwrap();
+        s.write_all(b"CONNECT invalid_host HTTP/1.1\r\nHost: invalid\r\n\r\n")
+            .await
+            .unwrap();
     }
     tokio::time::sleep(Duration::from_millis(20)).await;
 
@@ -1042,15 +1098,24 @@ async fn test_tier3_raii_guard_leak_test() {
     }
 
     // Verify active connections reflect the open tunnels
-    let active = server.metrics.active_connections.load(std::sync::atomic::Ordering::Relaxed);
+    let active = server
+        .metrics
+        .active_connections
+        .load(std::sync::atomic::Ordering::Relaxed);
     assert!(active >= 10);
 
     // Drop all tunnels
     drop(tunnels);
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_active = server.metrics.active_connections.load(std::sync::atomic::Ordering::Relaxed);
-    assert_eq!(final_active, 0, "All connection guards must return to zero upon drop");
+    let final_active = server
+        .metrics
+        .active_connections
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(
+        final_active, 0,
+        "All connection guards must return to zero upon drop"
+    );
 }
 
 // =========================================================================
@@ -1070,7 +1135,9 @@ async fn test_tier4_smart_tv_pac_autoconfig_and_streaming() {
     );
     let (status, headers, body) = server.request(&req).await.unwrap();
     assert_eq!(status, 200);
-    assert!(find_header(&headers, "content-type").unwrap().contains("application/x-ns-proxy-autoconfig"));
+    assert!(find_header(&headers, "content-type")
+        .unwrap()
+        .contains("application/x-ns-proxy-autoconfig"));
 
     let pac_script = String::from_utf8_lossy(&body);
     let expected_proxy_rule = format!("PROXY 192.168.1.100:{}; DIRECT", server.addr.port());
@@ -1080,13 +1147,17 @@ async fn test_tier4_smart_tv_pac_autoconfig_and_streaming() {
     assert!(pac_script.contains("\"googlevideo.com\""));
 
     // 3. Smart TV establishes CONNECT tunnel to proxy
-    let (mut tunnel, c_status, _) = http_connect_tunnel(server.addr, "127.0.0.1", mock_upstream.port())
-        .await
-        .unwrap();
+    let (mut tunnel, c_status, _) =
+        http_connect_tunnel(server.addr, "127.0.0.1", mock_upstream.port())
+            .await
+            .unwrap();
     assert_eq!(c_status, 200);
 
     // 4. Stream 1 MB 4K chunk through tunnel
-    let get_req = format!("GET /video.mp4 HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", mock_upstream.port());
+    let get_req = format!(
+        "GET /video.mp4 HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        mock_upstream.port()
+    );
     tunnel.write_all(get_req.as_bytes()).await.unwrap();
 
     let mut response_buf = Vec::new();
@@ -1122,7 +1193,9 @@ async fn test_tier4_ios_mobileconfig_setup_workflow() {
 
     // 2. Client downloads Supercell gaming profile
     let (s_status, s_headers, s_body) = server
-        .request("GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .request(
+            "GET /supercell.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        )
         .await
         .unwrap();
     assert_eq!(s_status, 200);
@@ -1136,7 +1209,9 @@ async fn test_tier4_ios_mobileconfig_setup_workflow() {
 
     // 3. Client downloads Null's Proxy gaming profile
     let (n_status, n_headers, n_body) = server
-        .request("GET /nullsproxy.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .request(
+            "GET /nullsproxy.mobileconfig HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        )
         .await
         .unwrap();
     assert_eq!(n_status, 200);
@@ -1172,8 +1247,12 @@ async fn test_tier4_realtime_dashboard_and_telemetry_workflow() {
     assert_eq!(stats1.bytes_remote_to_client, 0);
 
     // 2. Traffic generation: 2 HTTP CONNECT tunnels transferring 256 KB each
-    let (mut t1, _, _) = http_connect_tunnel(server.addr, "127.0.0.1", echo.port()).await.unwrap();
-    let (mut t2, _, _) = http_connect_tunnel(server.addr, "127.0.0.1", echo.port()).await.unwrap();
+    let (mut t1, _, _) = http_connect_tunnel(server.addr, "127.0.0.1", echo.port())
+        .await
+        .unwrap();
+    let (mut t2, _, _) = http_connect_tunnel(server.addr, "127.0.0.1", echo.port())
+        .await
+        .unwrap();
 
     let data = vec![0xDDu8; 256 * 1024];
     t1.write_all(&data).await.unwrap();
@@ -1198,5 +1277,11 @@ async fn test_tier4_realtime_dashboard_and_telemetry_workflow() {
     assert_eq!(stats2.bytes_remote_to_client, 512 * 1024);
     assert!(stats2.active_connections <= 1);
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(server.metrics.active_connections.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(
+        server
+            .metrics
+            .active_connections
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
 }

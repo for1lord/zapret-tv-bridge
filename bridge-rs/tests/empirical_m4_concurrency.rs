@@ -20,7 +20,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot};
 
-use common::{bind_ephemeral_listener, http_connect_tunnel, socks5_connect_ipv4, socks5_handshake, MockEchoServer};
+use common::{
+    bind_ephemeral_listener, http_connect_tunnel, socks5_connect_ipv4, socks5_handshake,
+    MockEchoServer,
+};
 use zapret_tv_bridge_rs::faketls::{
     FakeTlsStream, TgGatewayConfig, CLIENT_RANDOM_LEN, SESSION_ID_LEN, TLS_RECORD_HANDSHAKE,
 };
@@ -315,9 +318,12 @@ async fn run_faketls_client_session(
     client_id: usize,
     roundtrips: usize,
 ) -> Result<(), String> {
-    let mut client = TcpStream::connect(gateway_addr)
-        .await
-        .map_err(|e| format!("Client {} connection error to {}: {}", client_id, gateway_addr, e))?;
+    let mut client = TcpStream::connect(gateway_addr).await.map_err(|e| {
+        format!(
+            "Client {} connection error to {}: {}",
+            client_id, gateway_addr, e
+        )
+    })?;
 
     // Step 1: Send FakeTLS ClientHello
     let client_hello = create_test_client_hello(secret, 0);
@@ -337,7 +343,10 @@ async fn run_faketls_client_session(
         .await
         .map_err(|e| format!("Client {} read ServerHello error: {}", client_id, e))?;
     if n < 127 + 6 || sh_buf[0] != TLS_RECORD_HANDSHAKE {
-        return Err(format!("Client {} received invalid ServerHello (len={})", client_id, n));
+        return Err(format!(
+            "Client {} received invalid ServerHello (len={})",
+            client_id, n
+        ));
     }
 
     // Step 3: Wrap client stream in FakeTlsStream
@@ -385,21 +394,26 @@ async fn run_faketls_client_session(
             .map_err(|e| format!("Client {} flush packet error round {}: {}", client_id, r, e))?;
 
         let mut echo_buf = vec![0u8; encrypted_pkt.len()];
-        let read_res = tokio::time::timeout(
-            Duration::from_secs(6),
-            client_tls.read_exact(&mut echo_buf),
-        )
-        .await
-        .map_err(|_| format!("Client {} echo read timed out round {}", client_id, r))?
-        .map_err(|e| format!("Client {} echo read error round {}: {}", client_id, r, e))?;
+        let read_res =
+            tokio::time::timeout(Duration::from_secs(6), client_tls.read_exact(&mut echo_buf))
+                .await
+                .map_err(|_| format!("Client {} echo read timed out round {}", client_id, r))?
+                .map_err(|e| format!("Client {} echo read error round {}: {}", client_id, r, e))?;
 
         if read_res != echo_buf.len() {
-            return Err(format!("Client {} incomplete echo read (expected {})", client_id, echo_buf.len()));
+            return Err(format!(
+                "Client {} incomplete echo read (expected {})",
+                client_id,
+                echo_buf.len()
+            ));
         }
 
         client_dec.apply_keystream(&mut echo_buf);
         if echo_buf != mtproto_pkt {
-            return Err(format!("Client {} payload corrupted in round {}", client_id, r));
+            return Err(format!(
+                "Client {} payload corrupted in round {}",
+                client_id, r
+            ));
         }
     }
 
@@ -676,7 +690,8 @@ async fn test_empirical_mixed_workload_all_nodes_concurrent() {
                 .map_err(|e| format!("Web #{} connect failed: {}", i, e))?;
             let req = format!(
                 "GET {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-                route, proxy_addr.port()
+                route,
+                proxy_addr.port()
             );
             stream
                 .write_all(req.as_bytes())
@@ -732,7 +747,10 @@ async fn test_empirical_mixed_workload_all_nodes_concurrent() {
         );
     }
 
-    assert_eq!(success_count, 110, "All 110 mixed workload tasks must succeed");
+    assert_eq!(
+        success_count, 110,
+        "All 110 mixed workload tasks must succeed"
+    );
 
     // Verify unified ProxyMetrics
     let total = metrics.total_connections.load(Ordering::Relaxed);
@@ -744,7 +762,10 @@ async fn test_empirical_mixed_workload_all_nodes_concurrent() {
         total, bytes_up, bytes_down
     );
 
-    assert!(total >= 110, "Total connections must reflect at least 110 tasks");
+    assert!(
+        total >= 110,
+        "Total connections must reflect at least 110 tasks"
+    );
     assert!(bytes_up > 0, "Unified upstream bytes must be positive");
     assert!(bytes_down > 0, "Unified downstream bytes must be positive");
 
@@ -763,7 +784,9 @@ async fn test_empirical_mixed_workload_all_nodes_concurrent() {
         active_final
     );
 
-    println!("[Mixed-Workload Test 2 PASSED] Unified Node 1 + Node 3 + Node 4 integration verified.");
+    println!(
+        "[Mixed-Workload Test 2 PASSED] Unified Node 1 + Node 3 + Node 4 integration verified."
+    );
 }
 
 // =========================================================================
@@ -909,7 +932,9 @@ async fn test_empirical_telemetry_accuracy_and_connection_lifecycle() {
         }
         // Non-TLS plaintext HTTP
         if let Ok(mut c) = TcpStream::connect(gw_addr).await {
-            let _ = c.write_all(b"GET /probe HTTP/1.1\r\nHost: test\r\n\r\n").await;
+            let _ = c
+                .write_all(b"GET /probe HTTP/1.1\r\nHost: test\r\n\r\n")
+                .await;
             let _ = c.shutdown().await;
         }
     }
@@ -980,7 +1005,10 @@ async fn test_empirical_resource_memory_lean_and_concurrency_growth() {
 
     // Blast 100 concurrent FakeTLS sessions to stress allocation
     let burst_count = 100;
-    println!("[Resource Test 4] Blasting {} concurrent FakeTLS client sessions...", burst_count);
+    println!(
+        "[Resource Test 4] Blasting {} concurrent FakeTLS client sessions...",
+        burst_count
+    );
 
     let mut burst_handles = Vec::with_capacity(burst_count);
     for i in 0..burst_count {
@@ -1070,7 +1098,10 @@ async fn test_empirical_resource_memory_lean_and_concurrency_growth() {
             "Acceptance Criterion FAILED: Idle Working Set ({:.2} MB) exceeds 15.0 MB ceiling",
             ws_mb
         );
-        println!("[Resource Test 4 PASSED] Standalone binary idle memory ({:.2} MB) is <= 15.0 MB.", ws_mb);
+        println!(
+            "[Resource Test 4 PASSED] Standalone binary idle memory ({:.2} MB) is <= 15.0 MB.",
+            ws_mb
+        );
     }
 
     println!("[Resource Test 4 PASSED] Concurrency memory growth is strictly bounded.");
@@ -1116,9 +1147,15 @@ fn test_empirical_zero_trigger_words_compliance() {
     // P4: [0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0, 0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80]
     // P5: [0x62, 0x79, 0x70, 0x61, 0x73, 0x73]
     let pattern_p1: [u8; 10] = [0xd0, 0xbe, 0xd0, 0xb1, 0xd1, 0x85, 0xd0, 0xbe, 0xd0, 0xb4];
-    let pattern_p2: [u8; 18] = [0xd0, 0xb1, 0xd0, 0xbb, 0xd0, 0xbe, 0xd0, 0xba, 0xd0, 0xb8, 0xd1, 0x80, 0xd0, 0xbe, 0xd0, 0xb2, 0xd0, 0xba];
+    let pattern_p2: [u8; 18] = [
+        0xd0, 0xb1, 0xd0, 0xbb, 0xd0, 0xbe, 0xd0, 0xba, 0xd0, 0xb8, 0xd1, 0x80, 0xd0, 0xbe, 0xd0,
+        0xb2, 0xd0, 0xba,
+    ];
     let pattern_p3: [u8; 6] = [0xd1, 0x80, 0xd0, 0xba, 0xd0, 0xbd];
-    let pattern_p4: [u8; 24] = [0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0, 0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80];
+    let pattern_p4: [u8; 24] = [
+        0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0,
+        0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80,
+    ];
     let pattern_p5: [u8; 6] = [0x62, 0x79, 0x70, 0x61, 0x73, 0x73];
 
     let patterns: &[(&str, &[u8])] = &[

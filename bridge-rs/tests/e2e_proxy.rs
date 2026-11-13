@@ -80,10 +80,9 @@ async fn test_tier1_http_connect_to_mock_tcp_echo() {
         .await
         .expect("Proxy server must be running for E2E tests");
 
-    let (mut tunnel, status, _) =
-        http_connect_tunnel(proxy_addr, "127.0.0.1", echo_server.port())
-            .await
-            .expect("HTTP CONNECT handshake failed");
+    let (mut tunnel, status, _) = http_connect_tunnel(proxy_addr, "127.0.0.1", echo_server.port())
+        .await
+        .expect("HTTP CONNECT handshake failed");
 
     assert_eq!(status, 200, "Expected HTTP 200 Connection Established");
 
@@ -563,10 +562,9 @@ async fn test_tier2_large_payload_http_connect() {
         .await
         .expect("Proxy server must be running for E2E tests");
 
-    let (tunnel, status, _) =
-        http_connect_tunnel(proxy_addr, "127.0.0.1", echo_server.port())
-            .await
-            .expect("HTTP CONNECT handshake failed");
+    let (tunnel, status, _) = http_connect_tunnel(proxy_addr, "127.0.0.1", echo_server.port())
+        .await
+        .expect("HTTP CONNECT handshake failed");
 
     assert_eq!(status, 200);
 

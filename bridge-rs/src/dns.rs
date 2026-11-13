@@ -1,8 +1,8 @@
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::task::JoinSet;
@@ -125,9 +125,8 @@ impl DnsCache {
 /// Global DNS cache initialized lazily using `std::sync::LazyLock`.
 ///
 /// Replaces legacy `lazy_static` with zero external crate dependencies.
-pub static GLOBAL_DNS_CACHE: LazyLock<DnsCache> = LazyLock::new(|| {
-    DnsCache::new(DEFAULT_DNS_TTL, MAX_DNS_CACHE_CAPACITY)
-});
+pub static GLOBAL_DNS_CACHE: LazyLock<DnsCache> =
+    LazyLock::new(|| DnsCache::new(DEFAULT_DNS_TTL, MAX_DNS_CACHE_CAPACITY));
 
 /// Validates whether a candidate IP address is routable and valid.
 pub fn is_valid_candidate_ip(ip: IpAddr) -> bool {
@@ -256,7 +255,12 @@ pub fn parse_dns_a_answers(buf: &[u8], expected_id: u16) -> Option<Vec<Ipv4Addr>
             return None;
         }
         if rtype == 1 && rdlen == 4 {
-            ips.push(Ipv4Addr::new(buf[idx], buf[idx + 1], buf[idx + 2], buf[idx + 3]));
+            ips.push(Ipv4Addr::new(
+                buf[idx],
+                buf[idx + 1],
+                buf[idx + 2],
+                buf[idx + 3],
+            ));
         }
         idx += rdlen;
     }
@@ -272,24 +276,36 @@ pub fn parse_dns_a_answers(buf: &[u8], expected_id: u16) -> Option<Vec<Ipv4Addr>
 pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
     let packet = build_dns_query(hostname)?;
     let target = format!("{server_ip}:53");
-    let mut stream = timeout(Duration::from_millis(1500), TcpStream::connect(&target)).await.ok()?.ok()?;
+    let mut stream = timeout(Duration::from_millis(1500), TcpStream::connect(&target))
+        .await
+        .ok()?
+        .ok()?;
 
     let len = packet.len() as u16;
     let mut tcp_msg = Vec::with_capacity(2 + packet.len());
     tcp_msg.extend_from_slice(&len.to_be_bytes());
     tcp_msg.extend_from_slice(&packet);
 
-    timeout(Duration::from_millis(1500), stream.write_all(&tcp_msg)).await.ok()?.ok()?;
+    timeout(Duration::from_millis(1500), stream.write_all(&tcp_msg))
+        .await
+        .ok()?
+        .ok()?;
 
     let mut len_buf = [0u8; 2];
-    timeout(Duration::from_millis(2000), stream.read_exact(&mut len_buf)).await.ok()?.ok()?;
+    timeout(Duration::from_millis(2000), stream.read_exact(&mut len_buf))
+        .await
+        .ok()?
+        .ok()?;
     let resp_len = u16::from_be_bytes(len_buf) as usize;
     if resp_len < 12 || resp_len > 4096 {
         return None;
     }
 
     let mut buf = vec![0u8; resp_len];
-    timeout(Duration::from_millis(2000), stream.read_exact(&mut buf)).await.ok()?.ok()?;
+    timeout(Duration::from_millis(2000), stream.read_exact(&mut buf))
+        .await
+        .ok()?
+        .ok()?;
     parse_dns_a_answers(&buf, DNS_QUERY_ID)
 }
 
@@ -301,14 +317,22 @@ pub async fn query_dns_udp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Ad
     socket.send_to(&packet, &target).await.ok()?;
 
     let mut buf = [0u8; 1024];
-    let (len, _) = timeout(Duration::from_millis(1500), socket.recv_from(&mut buf)).await.ok()?.ok()?;
+    let (len, _) = timeout(Duration::from_millis(1500), socket.recv_from(&mut buf))
+        .await
+        .ok()?
+        .ok()?;
     if len < 12 {
         return None;
     }
     parse_dns_a_answers(&buf[..len], DNS_QUERY_ID)
 }
 
-fn push_candidate(out: &mut Vec<Candidate>, ip: IpAddr, confirm_before_cache: bool, allow_local: bool) {
+fn push_candidate(
+    out: &mut Vec<Candidate>,
+    ip: IpAddr,
+    confirm_before_cache: bool,
+    allow_local: bool,
+) {
     if !upstream_allowed(ip, allow_local) || out.iter().any(|c| c.ip == ip) {
         return;
     }
@@ -320,7 +344,12 @@ fn push_candidate(out: &mut Vec<Candidate>, ip: IpAddr, confirm_before_cache: bo
 
 async fn lookup_system(hostname: &str, allow_local: bool, out: &mut Vec<Candidate>) {
     let addr_str = format!("{hostname}:443");
-    if let Ok(Ok(addrs)) = timeout(Duration::from_millis(1500), tokio::net::lookup_host(addr_str)).await {
+    if let Ok(Ok(addrs)) = timeout(
+        Duration::from_millis(1500),
+        tokio::net::lookup_host(addr_str),
+    )
+    .await
+    {
         for sa in addrs {
             // ISP answers stay uncached until the connection actually carries data.
             push_candidate(out, sa.ip(), true, allow_local);
@@ -376,18 +405,29 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         push_candidate(&mut candidates, cached_ip, false, allow_local);
     }
 
-    let streaming = hostname.contains("googlevideo")
-        || hostname.contains("youtube")
-        || hostname.contains("ytimg")
-        || hostname.contains("ggpht");
-    if streaming {
-        lookup_system(hostname, allow_local, &mut candidates).await;
-    }
     lookup_public(hostname, allow_local, &mut candidates).await;
-    if !candidates.iter().any(|c| !c.confirm_before_cache) {
-        lookup_system(hostname, allow_local, &mut candidates).await;
-    }
+    let mut system = Vec::new();
+    lookup_system(hostname, allow_local, &mut system).await;
+    // Keep public answers even when the ISP resolver returns a long CDN list.
+    candidates = select_candidates(candidates, system);
     candidates
+}
+
+fn select_candidates(mut public: Vec<Candidate>, system: Vec<Candidate>) -> Vec<Candidate> {
+    public.truncate(4);
+    for candidate in system {
+        if public.len() >= 6 {
+            break;
+        }
+        if public.iter().any(|existing| existing.ip == candidate.ip) {
+            continue;
+        }
+        public.push(Candidate {
+            ip: candidate.ip,
+            confirm_before_cache: true,
+        });
+    }
+    public
 }
 
 pub const SOCKET_BUF_SIZE: usize = 128 * 1024; // 128 KB OS socket buffer
@@ -429,11 +469,10 @@ pub async fn connect_to_remote(hostname: &str, port: u16, allow_local: bool) -> 
         });
     }
 
-    let mut candidates = resolve_candidates(hostname, allow_local).await;
+    let candidates = resolve_candidates(hostname, allow_local).await;
     if candidates.is_empty() {
         return None;
     }
-    candidates.truncate(6);
 
     let mut pending = JoinSet::new();
     for candidate in candidates {
@@ -448,8 +487,6 @@ pub async fn connect_to_remote(hostname: &str, port: u16, allow_local: bool) -> 
             pending.abort_all();
             if !candidate.confirm_before_cache {
                 GLOBAL_DNS_CACHE.insert(hostname, candidate.ip);
-            } else {
-                GLOBAL_DNS_CACHE.remove(hostname);
             }
             return Some(Outbound {
                 stream,
@@ -473,6 +510,53 @@ pub fn remember_confirmed_ip(hostname: &str, ip: IpAddr) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn test_select_candidates_keeps_public_answers() {
+        let public = vec![
+            Candidate {
+                ip: "1.1.1.1".parse().unwrap(),
+                confirm_before_cache: false,
+            },
+            Candidate {
+                ip: "1.0.0.1".parse().unwrap(),
+                confirm_before_cache: false,
+            },
+            Candidate {
+                ip: "8.8.8.8".parse().unwrap(),
+                confirm_before_cache: false,
+            },
+            Candidate {
+                ip: "8.8.4.4".parse().unwrap(),
+                confirm_before_cache: false,
+            },
+            Candidate {
+                ip: "9.9.9.9".parse().unwrap(),
+                confirm_before_cache: false,
+            },
+        ];
+        let system = vec![
+            Candidate {
+                ip: "203.0.113.5".parse().unwrap(),
+                confirm_before_cache: true,
+            },
+            Candidate {
+                ip: "203.0.113.6".parse().unwrap(),
+                confirm_before_cache: true,
+            },
+            Candidate {
+                ip: "203.0.113.7".parse().unwrap(),
+                confirm_before_cache: true,
+            },
+        ];
+        let chosen = select_candidates(public, system);
+        assert_eq!(chosen.len(), 6);
+        assert!(chosen.iter().take(4).all(|c| !c.confirm_before_cache));
+        assert_eq!(chosen.iter().filter(|c| c.confirm_before_cache).count(), 2);
+        assert!(!chosen
+            .iter()
+            .any(|c| c.ip == "203.0.113.7".parse::<IpAddr>().unwrap()));
+    }
 
     #[test]
     fn test_dns_cache_ttl_and_eviction() {

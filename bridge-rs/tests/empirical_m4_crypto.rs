@@ -45,14 +45,21 @@ fn test_crypto_inplace_mutation_and_pointer_preservation() {
     let ptr_after = buffer.as_ptr();
 
     // Verify in-place mutation without reallocating or moving memory
-    assert_eq!(ptr_before, ptr_after, "Cipher mutation must occur strictly in-place");
+    assert_eq!(
+        ptr_before, ptr_after,
+        "Cipher mutation must occur strictly in-place"
+    );
     assert_ne!(buffer[0], 0x42, "Buffer contents must be encrypted");
 
     // Decrypt in-place with a fresh cipher
     let mut decryptor = Aes256Ctr::new(&key.into(), &iv.into());
     decryptor.apply_keystream(&mut buffer);
 
-    assert_eq!(buffer.as_ptr(), ptr_after, "Decryption mutation must be in-place");
+    assert_eq!(
+        buffer.as_ptr(),
+        ptr_after,
+        "Decryption mutation must be in-place"
+    );
     assert_eq!(buffer[0], 0x42, "Buffer must be restored to original value");
     assert_eq!(&buffer[..100], &[0x42u8; 100]);
 }
@@ -601,7 +608,11 @@ fn test_faketls_malformed_and_truncated_records() {
     for len in 0..43 {
         let dummy = vec![TLS_RECORD_HANDSHAKE; len];
         let res = verify_client_hello(&dummy, &secret);
-        assert!(res.is_none(), "Truncated length {} must return None without panic", len);
+        assert!(
+            res.is_none(),
+            "Truncated length {} must return None without panic",
+            len
+        );
     }
 
     // Corrupt record type (e.g. ApplicationData 0x17 or CCS 0x14)
@@ -623,7 +634,11 @@ fn test_faketls_malformed_and_truncated_records() {
 // ============================================================================
 
 fn encode_abridged_packet(payload: &[u8]) -> Vec<u8> {
-    assert_eq!(payload.len() % 4, 0, "Abridged payloads must be 4-byte aligned");
+    assert_eq!(
+        payload.len() % 4,
+        0,
+        "Abridged payloads must be 4-byte aligned"
+    );
     let words = payload.len() / 4;
     assert!(words > 0, "Payload words must be > 0");
 
@@ -661,8 +676,7 @@ fn test_msg_splitter_fuzzing_abridged() {
 
     // Generate diverse packets: small, medium, boundary, large
     let payload_sizes = [
-        4, 8, 12, 16, 64, 128, 256,
-        504, // 126 words (1-byte header)
+        4, 8, 12, 16, 64, 128, 256, 504, // 126 words (1-byte header)
         508, // 127 words (boundary: transitions to 4-byte header: 0x7F + 3 bytes)
         512, // 128 words (4-byte header)
         1024, 2048, 4096, 16384, 65536,
@@ -707,7 +721,11 @@ fn test_msg_splitter_fuzzing_abridged() {
             reconstructed.len()
         );
 
-        for (i, (got, want)) in reconstructed.iter().zip(expected_packets.iter()).enumerate() {
+        for (i, (got, want)) in reconstructed
+            .iter()
+            .zip(expected_packets.iter())
+            .enumerate()
+        {
             assert_eq!(
                 got, want,
                 "Abridged packet {} corrupted with chunk size {}",
@@ -734,8 +752,16 @@ fn test_msg_splitter_fuzzing_abridged() {
         }
 
         assert_eq!(reconstructed.len(), expected_packets.len());
-        for (i, (got, want)) in reconstructed.iter().zip(expected_packets.iter()).enumerate() {
-            assert_eq!(got, want, "Chaos fragmentation mismatch on Abridged packet {}", i);
+        for (i, (got, want)) in reconstructed
+            .iter()
+            .zip(expected_packets.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                got, want,
+                "Chaos fragmentation mismatch on Abridged packet {}",
+                i
+            );
         }
     }
 }
@@ -784,7 +810,11 @@ fn test_msg_splitter_fuzzing_intermediate() {
             chunk_size
         );
 
-        for (i, (got, want)) in reconstructed.iter().zip(expected_packets.iter()).enumerate() {
+        for (i, (got, want)) in reconstructed
+            .iter()
+            .zip(expected_packets.iter())
+            .enumerate()
+        {
             assert_eq!(
                 got, want,
                 "Intermediate packet {} mismatch with chunk size {}",
@@ -798,9 +828,7 @@ fn test_msg_splitter_fuzzing_intermediate() {
 fn test_msg_splitter_fuzzing_padded_intermediate() {
     let mut rng = StdRng::seed_from_u64(0x3333_5555_7777_9999);
 
-    let payload_sizes = [
-        4, 7, 16, 23, 64, 128, 256, 512, 1024, 4096, 16384, 65536,
-    ];
+    let payload_sizes = [4, 7, 16, 23, 64, 128, 256, 512, 1024, 4096, 16384, 65536];
 
     let mut expected_packets = Vec::new();
     let mut stream = Vec::new();
@@ -842,7 +870,11 @@ fn test_msg_splitter_fuzzing_padded_intermediate() {
             chunk_size
         );
 
-        for (i, (got, want)) in reconstructed.iter().zip(expected_packets.iter()).enumerate() {
+        for (i, (got, want)) in reconstructed
+            .iter()
+            .zip(expected_packets.iter())
+            .enumerate()
+        {
             assert_eq!(
                 got, want,
                 "Padded Intermediate packet {} mismatch with chunk size {}",
@@ -886,7 +918,11 @@ fn test_msg_splitter_defect_reproduction_malformed_zero_length_panic() {
         "MsgSplitter Intermediate must handle malformed zero-length header gracefully without panicking"
     );
     let packets = panic_result.unwrap();
-    assert_eq!(packets.len(), 1, "Splitter must emit unparsed payload as passthrough");
+    assert_eq!(
+        packets.len(),
+        1,
+        "Splitter must emit unparsed payload as passthrough"
+    );
     assert_eq!(packets[0].as_ref(), &zero_header);
     assert!(splitter_inter.is_disabled());
 
@@ -961,7 +997,11 @@ fn test_msg_splitter_oversized_packet_ceiling() {
     let giant_header = [0xFF, 0xFF, 0xFF, 0x7F];
     let mut splitter_inter = MsgSplitter::new(ProtoCodec::Intermediate);
     let packets = splitter_inter.split(&giant_header, &giant_header);
-    assert_eq!(packets.len(), 1, "Splitter must reject 2 GB Intermediate packet length and emit passthrough");
+    assert_eq!(
+        packets.len(),
+        1,
+        "Splitter must reject 2 GB Intermediate packet length and emit passthrough"
+    );
     assert_eq!(packets[0].as_ref(), &giant_header);
     assert!(splitter_inter.is_disabled());
 
@@ -969,21 +1009,33 @@ fn test_msg_splitter_oversized_packet_ceiling() {
     let len_16mb_plus_1 = (16 * 1024 * 1024 + 1u32).to_le_bytes();
     let mut splitter_inter_boundary = MsgSplitter::new(ProtoCodec::Intermediate);
     let packets = splitter_inter_boundary.split(&len_16mb_plus_1, &len_16mb_plus_1);
-    assert_eq!(packets.len(), 1, "Splitter must reject 16MB+1 Intermediate packet length");
+    assert_eq!(
+        packets.len(),
+        1,
+        "Splitter must reject 16MB+1 Intermediate packet length"
+    );
     assert_eq!(packets[0].as_ref(), &len_16mb_plus_1);
     assert!(splitter_inter_boundary.is_disabled());
 
     // 3. PaddedIntermediate header declaring 2 GB
     let mut splitter_padded = MsgSplitter::new(ProtoCodec::PaddedIntermediate);
     let packets = splitter_padded.split(&giant_header, &giant_header);
-    assert_eq!(packets.len(), 1, "Splitter must reject 2 GB PaddedIntermediate packet length");
+    assert_eq!(
+        packets.len(),
+        1,
+        "Splitter must reject 2 GB PaddedIntermediate packet length"
+    );
     assert_eq!(packets[0].as_ref(), &giant_header);
     assert!(splitter_padded.is_disabled());
 
     // 4. PaddedIntermediate header declaring 16 MB + 1 byte
     let mut splitter_padded_boundary = MsgSplitter::new(ProtoCodec::PaddedIntermediate);
     let packets = splitter_padded_boundary.split(&len_16mb_plus_1, &len_16mb_plus_1);
-    assert_eq!(packets.len(), 1, "Splitter must reject 16MB+1 PaddedIntermediate packet length");
+    assert_eq!(
+        packets.len(),
+        1,
+        "Splitter must reject 16MB+1 PaddedIntermediate packet length"
+    );
     assert_eq!(packets[0].as_ref(), &len_16mb_plus_1);
     assert!(splitter_padded_boundary.is_disabled());
 
@@ -993,17 +1045,34 @@ fn test_msg_splitter_oversized_packet_ceiling() {
     let words_bytes = words.to_le_bytes();
     let abridged_header_17mb = [0x7F, words_bytes[0], words_bytes[1], words_bytes[2]];
     let abridged_packets = abridged_splitter.split(&abridged_header_17mb, &abridged_header_17mb);
-    assert_eq!(abridged_packets.len(), 1, "Splitter must reject 17MB Abridged packet length");
+    assert_eq!(
+        abridged_packets.len(),
+        1,
+        "Splitter must reject 17MB Abridged packet length"
+    );
     assert_eq!(abridged_packets[0].as_ref(), &abridged_header_17mb);
     assert!(abridged_splitter.is_disabled());
 
     // 6. Abridged 4-byte header claiming 16 MB + 4 bytes
     let words_boundary = ((16 * 1024 * 1024) / 4 + 1u32).to_le_bytes();
-    let abridged_header_boundary = [0x7F, words_boundary[0], words_boundary[1], words_boundary[2]];
+    let abridged_header_boundary = [
+        0x7F,
+        words_boundary[0],
+        words_boundary[1],
+        words_boundary[2],
+    ];
     let mut abridged_splitter_boundary = MsgSplitter::new(ProtoCodec::Abridged);
-    let abridged_packets_boundary = abridged_splitter_boundary.split(&abridged_header_boundary, &abridged_header_boundary);
-    assert_eq!(abridged_packets_boundary.len(), 1, "Splitter must reject 16MB+4B Abridged packet length");
-    assert_eq!(abridged_packets_boundary[0].as_ref(), &abridged_header_boundary);
+    let abridged_packets_boundary =
+        abridged_splitter_boundary.split(&abridged_header_boundary, &abridged_header_boundary);
+    assert_eq!(
+        abridged_packets_boundary.len(),
+        1,
+        "Splitter must reject 16MB+4B Abridged packet length"
+    );
+    assert_eq!(
+        abridged_packets_boundary[0].as_ref(),
+        &abridged_header_boundary
+    );
     assert!(abridged_splitter_boundary.is_disabled());
 }
 
@@ -1032,9 +1101,16 @@ fn test_msg_splitter_zero_length_after_valid_packets() {
     stream.extend_from_slice(&[0u8; 4]);
 
     let packets = splitter.split(&stream, &stream);
-    assert_eq!(packets.len(), 4, "Must emit 3 valid packets and 1 passthrough packet for zero header");
+    assert_eq!(
+        packets.len(),
+        4,
+        "Must emit 3 valid packets and 1 passthrough packet for zero header"
+    );
     assert_eq!(&packets[0][4..], &[0x11, 0x22, 0x33, 0x44]);
-    assert_eq!(&packets[1][4..], &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x12, 0x34]);
+    assert_eq!(
+        &packets[1][4..],
+        &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x12, 0x34]
+    );
     assert_eq!(&packets[2][4..], &[0x99, 0x88, 0x77, 0x66]);
     assert_eq!(packets[3].as_ref(), &[0u8; 4]);
     assert!(splitter.is_disabled());
@@ -1067,7 +1143,10 @@ fn test_msg_splitter_zero_length_after_valid_packets() {
     let packets_abridged = splitter_abridged.split(&stream_abridged, &stream_abridged);
     assert_eq!(packets_abridged.len(), 3);
     assert_eq!(&packets_abridged[0][1..], &[0x01, 0x02, 0x03, 0x04]);
-    assert_eq!(&packets_abridged[1][4..], &[0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C]);
+    assert_eq!(
+        &packets_abridged[1][4..],
+        &[0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C]
+    );
     assert_eq!(packets_abridged[2].as_ref(), &[0x00]);
     assert!(splitter_abridged.is_disabled());
 
@@ -1097,7 +1176,11 @@ fn test_msg_splitter_zero_length_after_valid_packets() {
         let res = splitter_incremental.split(&single, &single);
         collected.extend(res);
     }
-    assert_eq!(collected.len(), 2, "Byte-by-byte streaming must produce valid packet then zero header");
+    assert_eq!(
+        collected.len(),
+        2,
+        "Byte-by-byte streaming must produce valid packet then zero header"
+    );
     assert_eq!(&collected[0][4..], &[0x55, 0x66, 0x77, 0x88]);
     assert_eq!(collected[1].as_ref(), &[0u8; 4]);
     assert!(splitter_incremental.is_disabled());

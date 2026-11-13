@@ -1,3 +1,5 @@
+use memmap2::Mmap;
+use parking_lot::{Mutex, RwLock};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, Write};
@@ -5,8 +7,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
-use memmap2::Mmap;
-use parking_lot::{Mutex, RwLock};
 
 pub const MAGIC: u32 = 0x5A505254; // "ZPRT"
 pub const FORMAT_VERSION: u16 = 2;
@@ -174,7 +174,9 @@ pub fn parse_ipv4_cidr(line: &str) -> Result<Ipv4Interval, String> {
         Some((ip, pfx)) => (ip.trim(), Some(pfx.trim())),
         None => (clean, None),
     };
-    let ip: Ipv4Addr = ip_part.parse().map_err(|e| format!("Invalid IPv4 {ip_part}: {e}"))?;
+    let ip: Ipv4Addr = ip_part
+        .parse()
+        .map_err(|e| format!("Invalid IPv4 {ip_part}: {e}"))?;
     let prefix_len: u8 = match pfx_part {
         Some(p) => p.parse().map_err(|e| format!("Invalid prefix {p}: {e}"))?,
         None => 32,
@@ -203,7 +205,9 @@ pub fn parse_ipv6_cidr(line: &str) -> Result<Ipv6Interval, String> {
         Some((ip, pfx)) => (ip.trim(), Some(pfx.trim())),
         None => (clean, None),
     };
-    let ip: Ipv6Addr = ip_part.parse().map_err(|e| format!("Invalid IPv6 {ip_part}: {e}"))?;
+    let ip: Ipv6Addr = ip_part
+        .parse()
+        .map_err(|e| format!("Invalid IPv6 {ip_part}: {e}"))?;
     let prefix_len: u8 = match pfx_part {
         Some(p) => p.parse().map_err(|e| format!("Invalid prefix {p}: {e}"))?,
         None => 128,
@@ -475,28 +479,29 @@ pub struct SmartRouter {
 }
 
 static RELOAD_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static RELOAD_NOTIFY: std::sync::LazyLock<std::sync::mpsc::Sender<()>> = std::sync::LazyLock::new(|| {
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let _ = std::thread::Builder::new()
-        .name("zapret-reload".into())
-        .spawn(move || {
-            while rx.recv().is_ok() {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-                while std::time::Instant::now() < deadline {
-                    let left = deadline.saturating_duration_since(std::time::Instant::now());
-                    if rx.recv_timeout(left).is_err() {
-                        break;
+static RELOAD_NOTIFY: std::sync::LazyLock<std::sync::mpsc::Sender<()>> =
+    std::sync::LazyLock::new(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let _ = std::thread::Builder::new()
+            .name("zapret-reload".into())
+            .spawn(move || {
+                while rx.recv().is_ok() {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    while std::time::Instant::now() < deadline {
+                        let left = deadline.saturating_duration_since(std::time::Instant::now());
+                        if rx.recv_timeout(left).is_err() {
+                            break;
+                        }
                     }
+                    while rx.try_recv().is_ok() {}
+                    if !RELOAD_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+                        continue;
+                    }
+                    restart_zapret_service();
                 }
-                while rx.try_recv().is_ok() {}
-                if !RELOAD_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
-                    continue;
-                }
-                restart_zapret_service();
-            }
-        });
-    tx
-});
+            });
+        tx
+    });
 
 /// Enables the debounced Zapret service restart after a new hostlist line is written.
 pub fn arm_service_reload() {
@@ -684,7 +689,9 @@ pub fn host_has_suffix(domain: &str, suffix: &str) -> bool {
 }
 
 pub fn host_matches_any(domain: &str, suffixes: &[&str]) -> bool {
-    suffixes.iter().any(|suffix| host_has_suffix(domain, suffix))
+    suffixes
+        .iter()
+        .any(|suffix| host_has_suffix(domain, suffix))
 }
 
 const BIG_LIST_BYTES: u64 = 256 * 1024;
@@ -726,17 +733,36 @@ impl SmartRouter {
         Self::load_list_file(self.lists_dir.join("list-google.txt"), &mut new_target);
         Self::load_list_file(self.lists_dir.join("list-general-user.txt"), &mut new_user);
         Self::load_list_file(self.lists_dir.join("list-exclude.txt"), &mut new_exclude);
-        Self::load_list_file(self.lists_dir.join("list-exclude-user.txt"), &mut new_exclude);
+        Self::load_list_file(
+            self.lists_dir.join("list-exclude-user.txt"),
+            &mut new_exclude,
+        );
 
         let mut target_v4 = Vec::new();
         let mut target_v6 = Vec::new();
         let mut exclude_v4 = Vec::new();
         let mut exclude_v6 = Vec::new();
 
-        Self::load_cidr_file(self.lists_dir.join("ipset-target.txt"), &mut target_v4, &mut target_v6);
-        Self::load_cidr_file(self.lists_dir.join("ipset-all.txt"), &mut target_v4, &mut target_v6);
-        Self::load_cidr_file(self.lists_dir.join("ipset-exclude.txt"), &mut exclude_v4, &mut exclude_v6);
-        Self::load_cidr_file(self.lists_dir.join("ipset-exclude-user.txt"), &mut exclude_v4, &mut exclude_v6);
+        Self::load_cidr_file(
+            self.lists_dir.join("ipset-target.txt"),
+            &mut target_v4,
+            &mut target_v6,
+        );
+        Self::load_cidr_file(
+            self.lists_dir.join("ipset-all.txt"),
+            &mut target_v4,
+            &mut target_v6,
+        );
+        Self::load_cidr_file(
+            self.lists_dir.join("ipset-exclude.txt"),
+            &mut exclude_v4,
+            &mut exclude_v6,
+        );
+        Self::load_cidr_file(
+            self.lists_dir.join("ipset-exclude-user.txt"),
+            &mut exclude_v4,
+            &mut exclude_v6,
+        );
 
         // Standard RFC 1918 + loopback fallbacks if exclude lists are empty
         if exclude_v4.is_empty() {
@@ -806,7 +832,11 @@ impl SmartRouter {
     }
 
     /// Loads CIDR entries from file into raw interval buffers.
-    fn load_cidr_file<P: AsRef<Path>>(path: P, v4: &mut Vec<Ipv4Interval>, v6: &mut Vec<Ipv6Interval>) {
+    fn load_cidr_file<P: AsRef<Path>>(
+        path: P,
+        v4: &mut Vec<Ipv4Interval>,
+        v6: &mut Vec<Ipv6Interval>,
+    ) {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
             for line in reader.lines() {
@@ -907,7 +937,10 @@ impl SmartRouter {
                 if let Err(e) = Self::compile(&self.base_dir) {
                     eprintln!("[SmartRouter] Binary cache compilation failed: {e}");
                 } else {
-                    println!("[SmartRouter] Binary cache v2 built in {:.2}s", t0.elapsed().as_secs_f32());
+                    println!(
+                        "[SmartRouter] Binary cache v2 built in {:.2}s",
+                        t0.elapsed().as_secs_f32()
+                    );
                 }
             }
         }
@@ -917,48 +950,69 @@ impl SmartRouter {
             if let Ok(file) = File::open(&bin_path) {
                 if let Ok(mmap) = unsafe { Mmap::map(&file) } {
                     if let Ok(header) = BinaryHeaderV2::from_bytes(&mmap) {
-                        let total_min_len = (header.cidr_table_offset + header.cidr_table_len) as usize;
+                        let total_min_len =
+                            (header.cidr_table_offset + header.cidr_table_len) as usize;
                         if mmap.len() >= total_min_len {
                             // Extract 256-entry bucket index table
                             let mut bucket_table = [BucketEntry::default(); BUCKET_TABLE_ENTRIES];
                             let table_start = header.bucket_table_offset as usize;
                             for i in 0..BUCKET_TABLE_ENTRIES {
                                 let offset_idx = table_start + i * 8;
-                                let offset = u32::from_le_bytes(mmap[offset_idx..offset_idx + 4].try_into().unwrap());
-                                let byte_len = u32::from_le_bytes(mmap[offset_idx + 4..offset_idx + 8].try_into().unwrap());
+                                let offset = u32::from_le_bytes(
+                                    mmap[offset_idx..offset_idx + 4].try_into().unwrap(),
+                                );
+                                let byte_len = u32::from_le_bytes(
+                                    mmap[offset_idx + 4..offset_idx + 8].try_into().unwrap(),
+                                );
                                 bucket_table[i] = BucketEntry { offset, byte_len };
                             }
 
                             // Extract CIDR intervals
                             let mut curr = header.cidr_table_offset as usize;
-                            let mut target_v4 = Vec::with_capacity(header.target_ipv4_cidr_count as usize);
+                            let mut target_v4 =
+                                Vec::with_capacity(header.target_ipv4_cidr_count as usize);
                             for _ in 0..header.target_ipv4_cidr_count {
-                                let start = u32::from_le_bytes(mmap[curr..curr + 4].try_into().unwrap());
-                                let end = u32::from_le_bytes(mmap[curr + 4..curr + 8].try_into().unwrap());
+                                let start =
+                                    u32::from_le_bytes(mmap[curr..curr + 4].try_into().unwrap());
+                                let end = u32::from_le_bytes(
+                                    mmap[curr + 4..curr + 8].try_into().unwrap(),
+                                );
                                 target_v4.push(Ipv4Interval { start, end });
                                 curr += 8;
                             }
 
-                            let mut exclude_v4 = Vec::with_capacity(header.exclude_ipv4_cidr_count as usize);
+                            let mut exclude_v4 =
+                                Vec::with_capacity(header.exclude_ipv4_cidr_count as usize);
                             for _ in 0..header.exclude_ipv4_cidr_count {
-                                let start = u32::from_le_bytes(mmap[curr..curr + 4].try_into().unwrap());
-                                let end = u32::from_le_bytes(mmap[curr + 4..curr + 8].try_into().unwrap());
+                                let start =
+                                    u32::from_le_bytes(mmap[curr..curr + 4].try_into().unwrap());
+                                let end = u32::from_le_bytes(
+                                    mmap[curr + 4..curr + 8].try_into().unwrap(),
+                                );
                                 exclude_v4.push(Ipv4Interval { start, end });
                                 curr += 8;
                             }
 
-                            let mut target_v6 = Vec::with_capacity(header.target_ipv6_cidr_count as usize);
+                            let mut target_v6 =
+                                Vec::with_capacity(header.target_ipv6_cidr_count as usize);
                             for _ in 0..header.target_ipv6_cidr_count {
-                                let start = u128::from_le_bytes(mmap[curr..curr + 16].try_into().unwrap());
-                                let end = u128::from_le_bytes(mmap[curr + 16..curr + 32].try_into().unwrap());
+                                let start =
+                                    u128::from_le_bytes(mmap[curr..curr + 16].try_into().unwrap());
+                                let end = u128::from_le_bytes(
+                                    mmap[curr + 16..curr + 32].try_into().unwrap(),
+                                );
                                 target_v6.push(Ipv6Interval { start, end });
                                 curr += 32;
                             }
 
-                            let mut exclude_v6 = Vec::with_capacity(header.exclude_ipv6_cidr_count as usize);
+                            let mut exclude_v6 =
+                                Vec::with_capacity(header.exclude_ipv6_cidr_count as usize);
                             for _ in 0..header.exclude_ipv6_cidr_count {
-                                let start = u128::from_le_bytes(mmap[curr..curr + 16].try_into().unwrap());
-                                let end = u128::from_le_bytes(mmap[curr + 16..curr + 32].try_into().unwrap());
+                                let start =
+                                    u128::from_le_bytes(mmap[curr..curr + 16].try_into().unwrap());
+                                let end = u128::from_le_bytes(
+                                    mmap[curr + 16..curr + 32].try_into().unwrap(),
+                                );
                                 exclude_v6.push(Ipv6Interval { start, end });
                                 curr += 32;
                             }
@@ -1025,10 +1079,15 @@ impl SmartRouter {
                             let count = bytes.len() / word_len;
                             for i in 0..count {
                                 let offset = i * word_len;
-                                if let Ok(s) = std::str::from_utf8(&bytes[offset..offset + word_len]) {
+                                if let Ok(s) =
+                                    std::str::from_utf8(&bytes[offset..offset + word_len])
+                                {
                                     if let Ok(ipv4) = s.parse::<Ipv4Addr>() {
                                         let addr = u32::from(ipv4);
-                                        db_ips.push(Ipv4Interval { start: addr, end: addr });
+                                        db_ips.push(Ipv4Interval {
+                                            start: addr,
+                                            end: addr,
+                                        });
                                     }
                                 }
                             }
@@ -1041,7 +1100,9 @@ impl SmartRouter {
     }
 
     /// Compiles rules JSON and list directory files into Format v2 binary cache with atomic replacement.
-    pub fn compile<P: AsRef<Path>>(base_dir: P) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn compile<P: AsRef<Path>>(
+        base_dir: P,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let base = base_dir.as_ref();
         let json_path = base.join("routing_rules.json");
         let bin_path = base.join("routing_rules.bin");
@@ -1082,16 +1143,35 @@ impl SmartRouter {
         let mut exclude_domains = HashSet::new();
 
         if lists_dir.is_dir() {
-            Self::load_cidr_file(lists_dir.join("ipset-target.txt"), &mut target_v4, &mut target_v6);
-            Self::load_cidr_file(lists_dir.join("ipset-all.txt"), &mut target_v4, &mut target_v6);
-            Self::load_cidr_file(lists_dir.join("ipset-exclude.txt"), &mut exclude_v4, &mut exclude_v6);
-            Self::load_cidr_file(lists_dir.join("ipset-exclude-user.txt"), &mut exclude_v4, &mut exclude_v6);
+            Self::load_cidr_file(
+                lists_dir.join("ipset-target.txt"),
+                &mut target_v4,
+                &mut target_v6,
+            );
+            Self::load_cidr_file(
+                lists_dir.join("ipset-all.txt"),
+                &mut target_v4,
+                &mut target_v6,
+            );
+            Self::load_cidr_file(
+                lists_dir.join("ipset-exclude.txt"),
+                &mut exclude_v4,
+                &mut exclude_v6,
+            );
+            Self::load_cidr_file(
+                lists_dir.join("ipset-exclude-user.txt"),
+                &mut exclude_v4,
+                &mut exclude_v6,
+            );
 
             Self::load_list_file(lists_dir.join("list-general.txt"), &mut target_domains);
             Self::load_list_file(lists_dir.join("list-google.txt"), &mut target_domains);
             Self::load_list_file(lists_dir.join("list-general-user.txt"), &mut target_domains);
             Self::load_list_file(lists_dir.join("list-exclude.txt"), &mut exclude_domains);
-            Self::load_list_file(lists_dir.join("list-exclude-user.txt"), &mut exclude_domains);
+            Self::load_list_file(
+                lists_dir.join("list-exclude-user.txt"),
+                &mut exclude_domains,
+            );
 
             if let Ok(entries) = fs::read_dir(&lists_dir) {
                 for entry in entries.filter_map(Result::ok) {
@@ -1518,7 +1598,11 @@ impl SmartRouter {
         }
 
         let user_path = self.lists_dir.join("list-general-user.txt");
-        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(user_path) {
+        if let Ok(mut file) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(user_path)
+        {
             let _ = writeln!(file, "{domain}");
             println!("[SmartRouter] Domain {domain} dynamically registered for acceleration");
             if RELOAD_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1666,9 +1750,18 @@ mod tests {
         assert_eq!(merged[0].start, u32::from(Ipv4Addr::new(104, 16, 0, 0)));
         assert_eq!(merged[0].end, u32::from(Ipv4Addr::new(104, 27, 255, 255)));
 
-        assert!(contains_ipv4(&merged, u32::from(Ipv4Addr::new(104, 20, 1, 1))));
-        assert!(contains_ipv4(&merged, u32::from(Ipv4Addr::new(104, 25, 2, 2))));
-        assert!(!contains_ipv4(&merged, u32::from(Ipv4Addr::new(104, 28, 0, 1))));
+        assert!(contains_ipv4(
+            &merged,
+            u32::from(Ipv4Addr::new(104, 20, 1, 1))
+        ));
+        assert!(contains_ipv4(
+            &merged,
+            u32::from(Ipv4Addr::new(104, 25, 2, 2))
+        ));
+        assert!(!contains_ipv4(
+            &merged,
+            u32::from(Ipv4Addr::new(104, 28, 0, 1))
+        ));
 
         // IPv6 parsing
         let v6_bare = parse_ipv6_cidr("::1").unwrap();
@@ -1716,10 +1809,22 @@ mod tests {
         assert_eq!(router.should_route("sub.app"), (false, "default_direct"));
         assert_eq!(router.should_route("app"), (true, "database_routed"));
         assert_eq!(router.should_route("twitch.tv"), (true, "target_routed"));
-        assert_eq!(router.should_route("static-cdn.jtvnw.net"), (true, "target_routed"));
-        assert_eq!(router.should_route("static.twitchcdn.net"), (true, "target_routed"));
-        assert_eq!(router.should_route("video-weaver.arn03.hls.ttvnw.net"), (true, "target_routed"));
-        assert_eq!(router.should_route("unknown.xyz"), (false, "default_direct"));
+        assert_eq!(
+            router.should_route("static-cdn.jtvnw.net"),
+            (true, "target_routed")
+        );
+        assert_eq!(
+            router.should_route("static.twitchcdn.net"),
+            (true, "target_routed")
+        );
+        assert_eq!(
+            router.should_route("video-weaver.arn03.hls.ttvnw.net"),
+            (true, "target_routed")
+        );
+        assert_eq!(
+            router.should_route("unknown.xyz"),
+            (false, "default_direct")
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

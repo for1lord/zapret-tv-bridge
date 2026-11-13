@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use zapret_tv_bridge_rs::router::{
-    BinaryHeaderV2, DomainSuffixIter, NormalizedDomain, SmartRouter, FORMAT_VERSION,
-    HEADER_SIZE, MAGIC,
+    BinaryHeaderV2, DomainSuffixIter, NormalizedDomain, SmartRouter, FORMAT_VERSION, HEADER_SIZE,
+    MAGIC,
 };
 
 // ============================================================================
@@ -107,18 +107,22 @@ fn test_adversarial_domain_normalization_edge_cases() {
     let leading_1 = NormalizedDomain::try_from_str(".example.com").expect("Single leading dot");
     assert_eq!(leading_1.as_str(), "example.com");
 
-    let leading_many = NormalizedDomain::try_from_str(".....example.com").expect("Multiple leading dots");
+    let leading_many =
+        NormalizedDomain::try_from_str(".....example.com").expect("Multiple leading dots");
     assert_eq!(leading_many.as_str(), "example.com");
 
     // 5. Trailing root dots stripping
-    let trailing_1 = NormalizedDomain::try_from_str("example.com.").expect("Single trailing root dot");
+    let trailing_1 =
+        NormalizedDomain::try_from_str("example.com.").expect("Single trailing root dot");
     assert_eq!(trailing_1.as_str(), "example.com");
 
-    let trailing_many = NormalizedDomain::try_from_str("example.com.....").expect("Multiple trailing dots");
+    let trailing_many =
+        NormalizedDomain::try_from_str("example.com.....").expect("Multiple trailing dots");
     assert_eq!(trailing_many.as_str(), "example.com");
 
     // 6. Both leading and trailing dots
-    let both_dots = NormalizedDomain::try_from_str("...sub.example.com...").expect("Both leading and trailing dots");
+    let both_dots = NormalizedDomain::try_from_str("...sub.example.com...")
+        .expect("Both leading and trailing dots");
     assert_eq!(both_dots.as_str(), "sub.example.com");
 
     // 7. Mixed case lowercasing
@@ -136,19 +140,30 @@ fn test_adversarial_domain_normalization_edge_cases() {
     assert_eq!(port_sub.as_str(), "sub.domain.org");
 
     // 9. Bracketed IPv6 notation and ports
-    let bracket_v6_port = NormalizedDomain::try_from_str("[::1]:8080").expect("Bracketed IPv6 with port");
+    let bracket_v6_port =
+        NormalizedDomain::try_from_str("[::1]:8080").expect("Bracketed IPv6 with port");
     assert_eq!(bracket_v6_port.as_str(), "::1");
 
-    let bracket_v6_long = NormalizedDomain::try_from_str("[2001:db8::1]:443").expect("Long bracketed IPv6 with port");
+    let bracket_v6_long =
+        NormalizedDomain::try_from_str("[2001:db8::1]:443").expect("Long bracketed IPv6 with port");
     assert_eq!(bracket_v6_long.as_str(), "2001:db8::1");
 
     let bracket_bare = NormalizedDomain::try_from_str("[::1]").expect("Bracketed IPv6 bare");
     assert_eq!(bracket_bare.as_str(), "::1");
 
     // 10. Non-ASCII characters and malformed garbage
-    assert!(NormalizedDomain::try_from_str("").is_none(), "Empty string rejected");
-    assert!(NormalizedDomain::try_from_str(".").is_none(), "Single dot rejected");
-    assert!(NormalizedDomain::try_from_str(".....").is_none(), "Multiple dots rejected");
+    assert!(
+        NormalizedDomain::try_from_str("").is_none(),
+        "Empty string rejected"
+    );
+    assert!(
+        NormalizedDomain::try_from_str(".").is_none(),
+        "Single dot rejected"
+    );
+    assert!(
+        NormalizedDomain::try_from_str(".....").is_none(),
+        "Multiple dots rejected"
+    );
 
     // Valid Cyrillic UTF-8 preservation (to_ascii_lowercase must not corrupt multi-byte UTF-8)
     let cyrillic = NormalizedDomain::try_from_str("новости.яндекс.рф")
@@ -156,7 +171,8 @@ fn test_adversarial_domain_normalization_edge_cases() {
     assert_eq!(cyrillic.as_str(), "новости.яндекс.рф");
 
     // Control characters must not cause panics
-    let with_null = NormalizedDomain::try_from_str("\0null.com").expect("Domain with leading null byte");
+    let with_null =
+        NormalizedDomain::try_from_str("\0null.com").expect("Domain with leading null byte");
     assert_eq!(with_null.as_str(), "\0null.com");
 
     let with_crlf = NormalizedDomain::try_from_str("foo\r\nbar.com").expect("Domain with CRLF");
@@ -272,7 +288,8 @@ fn test_adversarial_zero_heap_allocation_hot_path() {
     });
 
     // 8. A repeated database lookup stays on the mmap path and does not allocate.
-    let temp_test_dir = std::env::temp_dir().join(format!("zprt_zero_alloc_{}", std::process::id()));
+    let temp_test_dir =
+        std::env::temp_dir().join(format!("zprt_zero_alloc_{}", std::process::id()));
     let temp_lists = temp_test_dir.join("lists");
     let _ = fs::create_dir_all(&temp_lists);
     fs::write(temp_test_dir.join("routing_rules.json"), r#"{"4": "test"}"#).unwrap();
@@ -300,10 +317,19 @@ fn test_adversarial_wildcard_and_anti_match() {
 
     // List contains wildcard rule: *.phncdn.com -> normalized to phncdn.com
     // 1. Valid subdomains must match target_routed
-    assert_eq!(router.should_route("video.phncdn.com"), (true, "target_routed"));
+    assert_eq!(
+        router.should_route("video.phncdn.com"),
+        (true, "target_routed")
+    );
     assert_eq!(router.should_route("phncdn.com"), (true, "target_routed"));
-    assert_eq!(router.should_route("cdn.video.phncdn.com"), (true, "target_routed"));
-    assert_eq!(router.should_route("a.b.c.d.phncdn.com"), (true, "target_routed"));
+    assert_eq!(
+        router.should_route("cdn.video.phncdn.com"),
+        (true, "target_routed")
+    );
+    assert_eq!(
+        router.should_route("a.b.c.d.phncdn.com"),
+        (true, "target_routed")
+    );
 
     // 2. Anti-match: Suffix/Substring false-positives MUST NOT match!
     // A domain where phncdn.com is NOT a dot-separated suffix
@@ -356,7 +382,11 @@ fn test_adversarial_priority_order_and_conflicts() {
     // "conflict-target-exc.com" is in BOTH target list and exclude list
     // "both" is in BOTH database and exclude list
     fs::write(&list_gen, "conflict-target-exc.com\npure-target.com\n").unwrap();
-    fs::write(&list_exc, "conflict-target-exc.com\nboth\nparent-excluded.org\n").unwrap();
+    fs::write(
+        &list_exc,
+        "conflict-target-exc.com\nboth\nparent-excluded.org\n",
+    )
+    .unwrap();
 
     let router = SmartRouter::new(&test_dir);
     assert!(router.is_mapped());
@@ -447,7 +477,11 @@ fn test_adversarial_corrupt_cache_recovery_matrix() {
             trunc_size
         );
         let router = SmartRouter::new(&test_dir);
-        assert!(router.is_mapped(), "Must recover from {}-byte truncated header", trunc_size);
+        assert!(
+            router.is_mapped(),
+            "Must recover from {}-byte truncated header",
+            trunc_size
+        );
         assert_eq!(router.should_route("cool"), (true, "database_routed"));
     }
 
@@ -545,7 +579,10 @@ fn test_adversarial_corrupt_cache_recovery_matrix() {
 
         // Router must detect truncated payload during mmap load, recompile, and succeed
         let router = SmartRouter::new(&test_dir);
-        assert!(router.is_mapped(), "Must recover from truncated payload file");
+        assert!(
+            router.is_mapped(),
+            "Must recover from truncated payload file"
+        );
         assert_eq!(router.should_route("cool"), (true, "database_routed"));
     }
 
@@ -587,9 +624,21 @@ fn test_adversarial_multi_file_mtime_invalidation_matrix() {
     let list_files = [
         ("list-general.txt", &list_gen, "domain1.com\nnew-gen.com\n"),
         ("list-google.txt", &list_goog, "domain2.com\nnew-goog.com\n"),
-        ("list-exclude.txt", &list_exc, "excluded1.com\nnew-exc.com\n"),
-        ("ipset-target.txt", &ipset_tgt, "104.16.0.0/13\n104.24.0.0/14\n"),
-        ("ipset-exclude.txt", &ipset_exc, "192.168.0.0/16\n10.0.0.0/8\n"),
+        (
+            "list-exclude.txt",
+            &list_exc,
+            "excluded1.com\nnew-exc.com\n",
+        ),
+        (
+            "ipset-target.txt",
+            &ipset_tgt,
+            "104.16.0.0/13\n104.24.0.0/14\n",
+        ),
+        (
+            "ipset-exclude.txt",
+            &ipset_exc,
+            "192.168.0.0/16\n10.0.0.0/8\n",
+        ),
     ];
 
     // 2. Iterate through each list file: advancing mtime MUST invalidate binary cache
@@ -643,7 +692,10 @@ fn test_adversarial_multi_file_mtime_invalidation_matrix() {
     let router2 = SmartRouter::new(&test_dir);
     assert!(router2.is_mapped());
     assert!(!SmartRouter::is_compilation_needed(&test_dir));
-    assert_eq!(router2.should_route("brand-new-stream.example"), (true, "target_routed"));
+    assert_eq!(
+        router2.should_route("brand-new-stream.example"),
+        (true, "target_routed")
+    );
 
     // 4. Verify no stray .tmp files left in test directory
     if let Ok(entries) = fs::read_dir(&test_dir) {

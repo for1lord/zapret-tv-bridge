@@ -127,7 +127,10 @@ fn test_fuzz_faketls_malformed_and_corrupt_handshakes() {
         let mut noise = vec![0u8; len];
         rng.fill_bytes(&mut noise);
         let res = verify_client_hello(&noise, &secret);
-        assert!(res.is_none(), "Random noise must never validate as ClientHello");
+        assert!(
+            res.is_none(),
+            "Random noise must never validate as ClientHello"
+        );
     }
 
     // 5. Single-bit corruption across the entire record
@@ -164,9 +167,14 @@ fn test_fuzz_faketls_timestamp_boundaries_and_extremes() {
     assert!(verify_client_hello(&make_valid_client_hello(&secret, 3600), &secret).is_none());
 
     // Extreme timestamps: Epoch 0, distant future, wrap-around values
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
     assert!(verify_client_hello(&make_valid_client_hello(&secret, -now), &secret).is_none()); // Epoch 0
-    assert!(verify_client_hello(&make_valid_client_hello(&secret, 1_000_000_000), &secret).is_none());
+    assert!(
+        verify_client_hello(&make_valid_client_hello(&secret, 1_000_000_000), &secret).is_none()
+    );
 }
 
 #[test]
@@ -437,9 +445,9 @@ fn test_fuzz_smart_router_edge_ips_and_cidr_intervals() {
         ("192.168.255.254", false, "exclude_direct"),
         ("169.254.0.1", false, "exclude_direct"),
         ("169.254.255.254", false, "exclude_direct"),
-        ("224.0.0.1", false, "default_direct"),       // Multicast
+        ("224.0.0.1", false, "default_direct"), // Multicast
         ("239.255.255.250", false, "default_direct"), // SSDP Multicast
-        ("240.0.0.1", false, "default_direct"),       // Class E
+        ("240.0.0.1", false, "default_direct"), // Class E
         ("255.255.255.255", false, "default_direct"), // Broadcast
     ];
 
@@ -459,14 +467,14 @@ fn test_fuzz_smart_router_edge_ips_and_cidr_intervals() {
 
     // 2. Critical IPv6 boundaries
     let edge_ips_v6 = [
-        ("::", false, "default_direct"),              // Unspecified
-        ("::1", false, "exclude_direct"),             // Loopback
-        ("fe80::1", false, "exclude_direct"),         // Link-local
-        ("fe80::dead:beef", false, "exclude_direct"), // Link-local
-        ("fc00::1", false, "exclude_direct"),         // Unique local
+        ("::", false, "default_direct"),                // Unspecified
+        ("::1", false, "exclude_direct"),               // Loopback
+        ("fe80::1", false, "exclude_direct"),           // Link-local
+        ("fe80::dead:beef", false, "exclude_direct"),   // Link-local
+        ("fc00::1", false, "exclude_direct"),           // Unique local
         ("fd12:3456:789a::1", false, "exclude_direct"), // Unique local
-        ("ff02::1", false, "default_direct"),         // Multicast
-        ("2001:db8::1", false, "default_direct"),     // Documentation prefix
+        ("ff02::1", false, "default_direct"),           // Multicast
+        ("2001:db8::1", false, "default_direct"),       // Documentation prefix
     ];
 
     for (ip_str, expected_routed, expected_reason) in edge_ips_v6 {
@@ -600,10 +608,7 @@ async fn test_fuzz_axum_invalid_endpoints_and_paths() {
     ];
 
     for path in traversal_paths {
-        let req = Request::builder()
-            .uri(path)
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri(path).body(Body::empty()).unwrap();
 
         let resp = router.clone().oneshot(req).await.unwrap();
         assert_eq!(
@@ -626,10 +631,7 @@ async fn test_fuzz_axum_invalid_endpoints_and_paths() {
             .collect();
         let uri = format!("/fuzz-test-{}", random_chars);
 
-        let req = Request::builder()
-            .uri(&uri)
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri(&uri).body(Body::empty()).unwrap();
 
         let resp = router.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -658,8 +660,10 @@ async fn test_fuzz_axum_rapid_health_and_telemetry_polling() {
                 };
 
                 // Increment some mock metrics concurrently
-                m.active_connections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                m.bytes_client_to_remote.fetch_add(1024, std::sync::atomic::Ordering::Relaxed);
+                m.active_connections
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                m.bytes_client_to_remote
+                    .fetch_add(1024, std::sync::atomic::Ordering::Relaxed);
 
                 let req = Request::builder()
                     .uri(endpoint)
@@ -672,7 +676,8 @@ async fn test_fuzz_axum_rapid_health_and_telemetry_polling() {
                     _ => assert_eq!(resp.status(), StatusCode::OK),
                 }
 
-                m.active_connections.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                m.active_connections
+                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
         }));
     }
@@ -683,11 +688,15 @@ async fn test_fuzz_axum_rapid_health_and_telemetry_polling() {
 
     // Check final metrics
     assert_eq!(
-        metrics.active_connections.load(std::sync::atomic::Ordering::SeqCst),
+        metrics
+            .active_connections
+            .load(std::sync::atomic::Ordering::SeqCst),
         0
     );
     assert_eq!(
-        metrics.bytes_client_to_remote.load(std::sync::atomic::Ordering::SeqCst),
+        metrics
+            .bytes_client_to_remote
+            .load(std::sync::atomic::Ordering::SeqCst),
         20 * 50 * 1024
     );
 }

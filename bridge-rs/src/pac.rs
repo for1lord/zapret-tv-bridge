@@ -190,7 +190,12 @@ fn read_domain_file(path: &Path, into: &mut HashSet<String>) {
         let Ok(line) = line else {
             continue;
         };
-        let trimmed = line.split('#').next().unwrap_or("").trim().to_ascii_lowercase();
+        let trimmed = line
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         if trimmed.is_empty() {
             continue;
         }

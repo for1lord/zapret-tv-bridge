@@ -86,9 +86,15 @@ async fn test_100_concurrent_connections_no_leak() {
             assert_eq!(status, 200);
 
             let msg = format!("HTTP-CONCURRENCY-TEST-PAYLOAD-{}\n", i);
-            tunnel.write_all(msg.as_bytes()).await.expect("Write failed");
+            tunnel
+                .write_all(msg.as_bytes())
+                .await
+                .expect("Write failed");
             let mut buf = vec![0u8; msg.len()];
-            tunnel.read_exact(&mut buf).await.expect("Read exact failed");
+            tunnel
+                .read_exact(&mut buf)
+                .await
+                .expect("Read exact failed");
             assert_eq!(buf, msg.as_bytes());
         }));
     }
@@ -111,9 +117,15 @@ async fn test_100_concurrent_connections_no_leak() {
             assert_eq!(rep, 0x00);
 
             let msg = format!("SOCKS5-CONCURRENCY-TEST-PAYLOAD-{}\n", i);
-            stream.write_all(msg.as_bytes()).await.expect("Write failed");
+            stream
+                .write_all(msg.as_bytes())
+                .await
+                .expect("Write failed");
             let mut buf = vec![0u8; msg.len()];
-            stream.read_exact(&mut buf).await.expect("Read exact failed");
+            stream
+                .read_exact(&mut buf)
+                .await
+                .expect("Read exact failed");
             assert_eq!(buf, msg.as_bytes());
         }));
     }
@@ -144,10 +156,7 @@ async fn test_100_concurrent_connections_no_leak() {
         active, 0,
         "Active connections must return to 0 after all 100 concurrent connections finish"
     );
-    assert_eq!(
-        delta, 100,
-        "Total connections delta must equal 100"
-    );
+    assert_eq!(delta, 100, "Total connections delta must equal 100");
 }
 
 /// Stress Test 2: Concurrency with abrupt client terminations (TCP RST, sudden drop, half-close, incomplete handshakes).
@@ -164,7 +173,9 @@ async fn test_abrupt_client_terminations_rst_drop_half_close() {
     for _ in 0..25 {
         let p_addr = proxy_addr;
         handles.push(tokio::spawn(async move {
-            if let Ok((mut tunnel, 200, _)) = http_connect_tunnel(p_addr, "127.0.0.1", echo_port).await {
+            if let Ok((mut tunnel, 200, _)) =
+                http_connect_tunnel(p_addr, "127.0.0.1", echo_port).await
+            {
                 let _ = tunnel.write_all(b"STREAMING-DATA-BEFORE-DROP").await;
                 // Abruptly drop stream without reading response
                 drop(tunnel);
@@ -178,7 +189,8 @@ async fn test_abrupt_client_terminations_rst_drop_half_close() {
         handles.push(tokio::spawn(async move {
             if let Ok(mut stream) = TcpStream::connect(s_addr).await {
                 if socks5_handshake(&mut stream, &[0x00]).await.is_ok() {
-                    if socks5_connect_ipv4(&mut stream, [127, 0, 0, 1], echo_port).await == Ok(0x00) {
+                    if socks5_connect_ipv4(&mut stream, [127, 0, 0, 1], echo_port).await == Ok(0x00)
+                    {
                         let _ = stream.write_all(b"HALF-CLOSE-TEST").await;
                         let _ = stream.shutdown().await;
                         // Read until EOF
@@ -194,7 +206,9 @@ async fn test_abrupt_client_terminations_rst_drop_half_close() {
     for _ in 0..25 {
         let p_addr = proxy_addr;
         handles.push(tokio::spawn(async move {
-            if let Ok((mut tunnel, 200, _)) = http_connect_tunnel(p_addr, "127.0.0.1", echo_port).await {
+            if let Ok((mut tunnel, 200, _)) =
+                http_connect_tunnel(p_addr, "127.0.0.1", echo_port).await
+            {
                 let _ = tunnel.write_all(b"DATA-BEFORE-RST").await;
                 // Set SO_LINGER on=true, timeout=0 for hard TCP RST on close
                 let sock_ref = socket2::SockRef::from(&tunnel);
@@ -300,7 +314,10 @@ async fn test_high_throughput_4k_streaming_multi_mb() {
                 for j in 0..this_chunk {
                     chunk[j] = ((sent + j) % 251) as u8;
                 }
-                writer.write_all(&chunk[..this_chunk]).await.expect("Write failed");
+                writer
+                    .write_all(&chunk[..this_chunk])
+                    .await
+                    .expect("Write failed");
                 sent += this_chunk;
             }
             writer.flush().await.expect("Flush failed");
@@ -308,12 +325,19 @@ async fn test_high_throughput_4k_streaming_multi_mb() {
 
         let (_, recv_res) = tokio::join!(writer_handle, reader_handle);
         let received = recv_res.expect("Reader panicked");
-        assert_eq!(received.len(), stream_size, "Received length must match 10 MB");
+        assert_eq!(
+            received.len(),
+            stream_size,
+            "Received length must match 10 MB"
+        );
 
         for (idx, &byte) in received.iter().enumerate() {
             let expected = (idx % 251) as u8;
             if byte != expected {
-                panic!("Corruption in HTTP CONNECT stream at byte {}: expected {}, got {}", idx, expected, byte);
+                panic!(
+                    "Corruption in HTTP CONNECT stream at byte {}: expected {}, got {}",
+                    idx, expected, byte
+                );
             }
         }
         println!("[4K Stream] HTTP CONNECT 10 MB verified with 0 corruption");
@@ -359,7 +383,10 @@ async fn test_high_throughput_4k_streaming_multi_mb() {
                 for j in 0..this_chunk {
                     chunk[j] = ((sent + j) % 241) as u8;
                 }
-                writer.write_all(&chunk[..this_chunk]).await.expect("Write failed");
+                writer
+                    .write_all(&chunk[..this_chunk])
+                    .await
+                    .expect("Write failed");
                 sent += this_chunk;
             }
             writer.flush().await.expect("Flush failed");
@@ -367,12 +394,19 @@ async fn test_high_throughput_4k_streaming_multi_mb() {
 
         let (_, recv_res) = tokio::join!(writer_handle, reader_handle);
         let received = recv_res.expect("Reader panicked");
-        assert_eq!(received.len(), stream_size, "Received length must match 10 MB");
+        assert_eq!(
+            received.len(),
+            stream_size,
+            "Received length must match 10 MB"
+        );
 
         for (idx, &byte) in received.iter().enumerate() {
             let expected = (idx % 241) as u8;
             if byte != expected {
-                panic!("Corruption in SOCKS5 stream at byte {}: expected {}, got {}", idx, expected, byte);
+                panic!(
+                    "Corruption in SOCKS5 stream at byte {}: expected {}, got {}",
+                    idx, expected, byte
+                );
             }
         }
         println!("[4K Stream] SOCKS5 10 MB verified with 0 corruption");

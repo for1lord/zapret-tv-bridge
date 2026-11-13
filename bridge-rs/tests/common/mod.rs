@@ -309,7 +309,10 @@ pub async fn http_connect_tunnel(
     let first_line = resp_str.lines().next().unwrap_or("");
     let parts: Vec<&str> = first_line.split_whitespace().collect();
     if parts.len() < 2 {
-        return Err(format!("Malformed HTTP response status line: {}", first_line));
+        return Err(format!(
+            "Malformed HTTP response status line: {}",
+            first_line
+        ));
     }
     let status_code: u16 = parts[1]
         .parse()
@@ -338,7 +341,10 @@ pub async fn socks5_handshake(stream: &mut TcpStream, methods: &[u8]) -> Result<
         .map_err(|e| format!("Failed to read SOCKS5 greeting response: {}", e))?;
 
     if resp[0] != 0x05 {
-        return Err(format!("Invalid SOCKS5 version byte in response: 0x{:02X}", resp[0]));
+        return Err(format!(
+            "Invalid SOCKS5 version byte in response: 0x{:02X}",
+            resp[0]
+        ));
     }
 
     Ok(resp[1])
@@ -354,7 +360,10 @@ pub async fn read_socks5_reply(stream: &mut TcpStream) -> Result<(u8, u8), Strin
         .map_err(|e| format!("Failed to read SOCKS5 reply header: {}", e))?;
 
     if header[0] != 0x05 {
-        return Err(format!("Invalid SOCKS5 reply version byte: 0x{:02X}", header[0]));
+        return Err(format!(
+            "Invalid SOCKS5 reply version byte: 0x{:02X}",
+            header[0]
+        ));
     }
 
     let rep = header[1];

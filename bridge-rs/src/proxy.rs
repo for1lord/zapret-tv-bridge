@@ -15,7 +15,7 @@ use crate::socks5;
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(3000);
 pub const MAX_HEADER_SIZE: usize = 65536;
-pub const UPSTREAM_BUF_SIZE: usize = 32768;    // 32 KB client -> remote
+pub const UPSTREAM_BUF_SIZE: usize = 32768; // 32 KB client -> remote
 pub const DOWNSTREAM_BUF_SIZE: usize = 262144; // 256 KB remote -> client (optimized for high-bitrate streaming)
 pub const SOCKET_BUF_SIZE: usize = 512 * 1024; // 512 KB OS socket buffer
 
@@ -54,7 +54,8 @@ pub async fn run_proxy_listener_with_web(
         let web_router = web_router.clone();
 
         tokio::spawn(async move {
-            let _ = handle_inbound_stream_with_web(stream, peer_addr, router, metrics, web_router).await;
+            let _ = handle_inbound_stream_with_web(stream, peer_addr, router, metrics, web_router)
+                .await;
         });
     }
 }
@@ -98,7 +99,10 @@ pub async fn handle_inbound_stream_with_web(
         }
         Err(_) => {
             metrics.inc_errors();
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "Handshake timed out"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Handshake timed out",
+            ));
         }
     };
 
@@ -155,7 +159,10 @@ pub async fn handle_http_stream_with_web(
             }
             Err(_) => {
                 metrics.inc_errors();
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "Header read timed out"));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Header read timed out",
+                ));
             }
         };
 
@@ -179,7 +186,10 @@ pub async fn handle_http_stream_with_web(
                     let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
                     let _ = client.flush().await;
                     metrics.inc_errors();
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported HTTP version"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Unsupported HTTP version",
+                    ));
                 }
 
                 if !is_connect {
@@ -203,13 +213,18 @@ pub async fn handle_http_stream_with_web(
                     let _ = client.flush().await;
                     // Drain remaining in-flight incoming bytes from client socket to avoid TCP RST on Windows
                     let mut drain_buf = [0u8; 4096];
-                    while let Ok(Ok(n)) = timeout(Duration::from_millis(50), client.read(&mut drain_buf)).await {
+                    while let Ok(Ok(n)) =
+                        timeout(Duration::from_millis(50), client.read(&mut drain_buf)).await
+                    {
                         if n == 0 {
                             break;
                         }
                     }
                     metrics.inc_errors();
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Header size exceeded"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Header size exceeded",
+                    ));
                 }
                 continue;
             }
@@ -267,7 +282,10 @@ pub async fn handle_http_connect(
             let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
             let _ = client.flush().await;
             metrics.inc_errors();
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Malformed CONNECT target (missing port)"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Malformed CONNECT target (missing port)",
+            ));
         }
     };
 
@@ -280,7 +298,9 @@ pub async fn handle_http_connect(
         .map(|addr| addr.ip().is_loopback())
         .unwrap_or(false);
     if let Some(blocked) = blocked_literal(&host, allow_local) {
-        let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        let _ = client
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await;
         metrics.inc_errors();
         return Err(blocked);
     }
@@ -294,14 +314,20 @@ pub async fn handle_http_connect(
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
             let _ = client.flush().await;
             let _ = client.shutdown().await;
-            return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "Remote connection failed"));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "Remote connection failed",
+            ));
         }
     };
 
     tune_socket(&remote);
 
     // Send 200 Connection Established handshake response
-    if let Err(e) = client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await {
+    if let Err(e) = client
+        .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        .await
+    {
         metrics.inc_errors();
         return Err(e);
     }
@@ -335,7 +361,8 @@ pub async fn handle_http_connect(
             Ok(())
         }
         Err(e) => {
-            if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected {
+            if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
+            {
                 metrics.inc_errors();
             }
             Err(e)
@@ -361,7 +388,9 @@ pub async fn handle_plain_http(
         .map(|addr| addr.ip().is_loopback())
         .unwrap_or(false);
     if let Some(blocked) = blocked_literal(&host, allow_local) {
-        let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        let _ = client
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await;
         metrics.inc_errors();
         return Err(blocked);
     }
@@ -373,7 +402,10 @@ pub async fn handle_plain_http(
             metrics.inc_errors();
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
             let _ = client.flush().await;
-            return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "Plain HTTP connect failed"));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "Plain HTTP connect failed",
+            ));
         }
     };
 
@@ -404,7 +436,8 @@ pub async fn handle_plain_http(
             Ok(())
         }
         Err(e) => {
-            if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected {
+            if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
+            {
                 metrics.inc_errors();
             }
             Err(e)
@@ -413,10 +446,7 @@ pub async fn handle_plain_http(
 }
 
 /// Handles local HTTP diagnostic routes via the embedded Axum web engine.
-pub async fn handle_local_route(
-    client: TcpStream,
-    path: &str,
-) -> io::Result<()> {
+pub async fn handle_local_route(client: TcpStream, path: &str) -> io::Result<()> {
     let metrics = Arc::new(ProxyMetrics::new());
     let config = crate::web::WebConfig::default();
     let router = crate::web::create_web_router(metrics, config);
@@ -446,7 +476,13 @@ fn blocked_literal(host: &str, allow_local: bool) -> Option<io::Error> {
 }
 
 fn request_is_local(path: &str, host_header: &str, local_port: u16) -> bool {
-    let bare = path.split('?').next().unwrap_or(path).split('#').next().unwrap_or(path);
+    let bare = path
+        .split('?')
+        .next()
+        .unwrap_or(path)
+        .split('#')
+        .next()
+        .unwrap_or(path);
     if is_management_path(bare) {
         return true;
     }
@@ -454,7 +490,11 @@ fn request_is_local(path: &str, host_header: &str, local_port: u16) -> bool {
         return is_addressed_to_self(&absolute_host, local_port);
     }
     if path.starts_with('/') && !path.starts_with("//") {
-        let host = if host_header.starts_with('/') { "" } else { host_header };
+        let host = if host_header.starts_with('/') {
+            ""
+        } else {
+            host_header
+        };
         return host.is_empty() || is_addressed_to_self(host, local_port);
     }
     is_addressed_to_self(host_header, local_port)
@@ -637,10 +677,7 @@ mod tests {
             parse_host_port("example.com", 80),
             ("example.com".to_string(), 80)
         );
-        assert_eq!(
-            parse_host_port("", 443),
-            ("127.0.0.1".to_string(), 443)
-        );
+        assert_eq!(parse_host_port("", 443), ("127.0.0.1".to_string(), 443));
     }
 
     #[test]
@@ -656,7 +693,15 @@ mod tests {
     fn test_origin_form_remote_is_not_local() {
         assert!(!request_is_local("/watch", "youtube.com", 8080));
         assert!(request_is_local("/health", "127.0.0.1:8080", 8080));
-        assert!(request_is_local("http://127.0.0.1:8080/proxy.pac", "127.0.0.1:8080", 8080));
-        assert!(!request_is_local("http://example.com/a", "example.com", 8080));
+        assert!(request_is_local(
+            "http://127.0.0.1:8080/proxy.pac",
+            "127.0.0.1:8080",
+            8080
+        ));
+        assert!(!request_is_local(
+            "http://example.com/a",
+            "example.com",
+            8080
+        ));
     }
 }

@@ -194,9 +194,7 @@ fn is_link_local_v4(v4: Ipv4Addr) -> bool {
 
 fn is_rfc1918(v4: Ipv4Addr) -> bool {
     let o = v4.octets();
-    o[0] == 10
-        || (o[0] == 172 && (16..=31).contains(&o[1]))
-        || (o[0] == 192 && o[1] == 168)
+    o[0] == 10 || (o[0] == 172 && (16..=31).contains(&o[1])) || (o[0] == 192 && o[1] == 168)
 }
 
 fn is_cgnat(v4: Ipv4Addr) -> bool {

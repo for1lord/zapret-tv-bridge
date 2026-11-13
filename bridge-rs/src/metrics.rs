@@ -31,13 +31,15 @@ impl ProxyMetrics {
     /// Increments upstream client-to-remote bytes transferred.
     #[inline]
     pub fn add_bytes_up(&self, bytes: u64) {
-        self.bytes_client_to_remote.fetch_add(bytes, Ordering::Relaxed);
+        self.bytes_client_to_remote
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Increments downstream remote-to-client bytes transferred.
     #[inline]
     pub fn add_bytes_down(&self, bytes: u64) {
-        self.bytes_remote_to_client.fetch_add(bytes, Ordering::Relaxed);
+        self.bytes_remote_to_client
+            .fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Increments the count of proxy errors encountered.
@@ -88,7 +90,9 @@ impl ConnectionGuard {
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        self.metrics.active_connections.fetch_sub(1, Ordering::Relaxed);
+        self.metrics
+            .active_connections
+            .fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -163,7 +167,8 @@ mod tests {
 
         let snap = metrics.snapshot();
         let json_str = serde_json::to_string(&snap).expect("Serialization failed");
-        let deserialized: MetricsSnapshot = serde_json::from_str(&json_str).expect("Deserialization failed");
+        let deserialized: MetricsSnapshot =
+            serde_json::from_str(&json_str).expect("Deserialization failed");
 
         assert_eq!(snap, deserialized);
         assert_eq!(deserialized.bytes_client_to_remote, 500);

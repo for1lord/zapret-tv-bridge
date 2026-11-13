@@ -84,7 +84,10 @@ impl EmpiricalWebServer {
     }
 
     /// Sends raw HTTP request and reads full HTTP response until connection close or EOF.
-    pub async fn send_raw(&self, raw: &str) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
+    pub async fn send_raw(
+        &self,
+        raw: &str,
+    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), String> {
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| format!("Connect to {}: {}", self.addr, e))?;
@@ -105,7 +108,9 @@ impl EmpiricalWebServer {
                         let header_part = String::from_utf8_lossy(&buf[..pos]);
                         let mut cl = None;
                         for line in header_part.lines() {
-                            if let Some(stripped) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            if let Some(stripped) =
+                                line.to_ascii_lowercase().strip_prefix("content-length:")
+                            {
                                 if let Ok(val) = stripped.trim().parse::<usize>() {
                                     cl = Some(val);
                                 }
@@ -220,7 +225,6 @@ const PAC_TEST_DOMAINS: &[(&str, bool)] = &[
     ("nnmclub.to", true),
     ("flibusta.is", true),
     ("flibusta.site", true),
-
     // 2. Direct, Domestic & Local Subnets (MUST -> DIRECT)
     ("yandex.ru", false),
     ("mail.yandex.ru", false),
@@ -256,14 +260,12 @@ const PAC_TEST_DOMAINS: &[(&str, bool)] = &[
     ("172.20.0.1", false),
     ("172.25.10.1", false),
     ("172.31.255.254", false),
-
     // 3. Gaming Services -> DIRECT (handled via MobileConfig profiles)
     ("supercell.com", false),
     ("accounts.supercell.com", false),
     ("clashroyale.com", false),
     ("brawlstars.com", false),
     ("clashofclans.com", false),
-
     // 4. Developer / Cloud Platforms -> DIRECT
     ("cloudcode-pa.googleapis.com", false),
     ("daily-cloudcode-pa.googleapis.com", false),
@@ -279,7 +281,6 @@ const PAC_TEST_DOMAINS: &[(&str, bool)] = &[
     ("claude.ai", false),
     ("geohide.ru", false),
     ("dns-ai.ru", false),
-
     // 5. Operating System Services -> DIRECT
     ("apple.com", false),
     ("www.apple.com", false),
@@ -290,7 +291,6 @@ const PAC_TEST_DOMAINS: &[(&str, bool)] = &[
     ("akadns.net", false),
     ("windowsupdate.microsoft.com", false),
     ("microsoft.com", false),
-
     // 6. Unlisted Default Destinations -> DIRECT
     ("example.com", false),
     ("wikipedia.org", false),
@@ -318,9 +318,12 @@ async fn test_empirical_pac_100_plus_domains_with_jscript_and_oracle() {
     let proxy_port = 8080;
     let script = generate_pac_script(proxy_host, proxy_port);
 
-    assert!(PAC_TEST_DOMAINS.len() >= 100, "Must test at least 100 domains");
+    assert!(
+        PAC_TEST_DOMAINS.len() >= 100,
+        "Must test at least 100 domains"
+    );
 
-const PAC_JS_HELPERS: &str = r#"
+    const PAC_JS_HELPERS: &str = r#"
 function isPlainHostName(host) { return host.indexOf('.') === -1; }
 function shExpMatch(str, pat) {
     var regexStr = '^' + pat.replace(/([\.\^\$\+\?\(\)\[\]\{\}\|\/\\])/g, '\\$1').replace(/\*/g, '.*') + '$';
@@ -336,15 +339,27 @@ function shExpMatch(str, pat) {
         r#"var expectedProxy = "PROXY {}:{}; DIRECT";"#,
         proxy_host, proxy_port
     ));
-    js.push_str(r#"
+    js.push_str(
+        r#"
 var tests = [
-"#);
+"#,
+    );
     for (i, (d, expect_proxy)) in PAC_TEST_DOMAINS.iter().enumerate() {
-        let comma = if i + 1 == PAC_TEST_DOMAINS.len() { "" } else { "," };
-        js.push_str(&format!(r#"  ["{}", {}]{}"#, d, if *expect_proxy { "true" } else { "false" }, comma));
+        let comma = if i + 1 == PAC_TEST_DOMAINS.len() {
+            ""
+        } else {
+            ","
+        };
+        js.push_str(&format!(
+            r#"  ["{}", {}]{}"#,
+            d,
+            if *expect_proxy { "true" } else { "false" },
+            comma
+        ));
         js.push_str("\n");
     }
-    js.push_str(r#"
+    js.push_str(
+        r#"
 ];
 var failCount = 0;
 for (var i = 0; i < tests.length; i++) {
@@ -364,9 +379,11 @@ if (failCount === 0) {
     WScript.Echo("FAILED:" + failCount);
     WScript.Quit(1);
 }
-"#);
+"#,
+    );
 
-    let temp_file = std::env::temp_dir().join(format!("empirical_pac_test_{}.js", std::process::id()));
+    let temp_file =
+        std::env::temp_dir().join(format!("empirical_pac_test_{}.js", std::process::id()));
     fs::write(&temp_file, js.as_bytes()).expect("Failed to write temporary test JScript");
 
     let cscript_res = Command::new("cscript.exe")
@@ -379,7 +396,10 @@ if (failCount === 0) {
     let out = cscript_res.expect("Failed to execute cscript.exe on Windows");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    eprintln!("CSCRIPT STATUS: {:?}, STDOUT: [{}], STDERR: [{}]", out.status, stdout, stderr);
+    eprintln!(
+        "CSCRIPT STATUS: {:?}, STDOUT: [{}], STDERR: [{}]",
+        out.status, stdout, stderr
+    );
     assert!(
         out.status.success(),
         "JScript execution reported failures: stdout={}, stderr={}",
@@ -412,7 +432,8 @@ if (failCount === 0) {
             "{}\n{}\nvar res = FindProxyForURL(\"http://{}/\", \"{}\");\nWScript.Echo(res);\n",
             PAC_JS_HELPERS, script, d, d
         );
-        let temp_single = std::env::temp_dir().join(format!("pac_case_test_{}.js", std::process::id()));
+        let temp_single =
+            std::env::temp_dir().join(format!("pac_case_test_{}.js", std::process::id()));
         fs::write(&temp_single, single_js.as_bytes()).unwrap();
         let out = Command::new("cscript.exe")
             .arg("//Nologo")
@@ -455,11 +476,15 @@ async fn test_empirical_dynamic_host_injection_oracle() {
         let (status, headers, body) = server.send_raw(&req).await.unwrap();
         assert_eq!(status, 200, "Host {} must return 200", host_hdr);
 
-        let ct = headers.iter().find(|(k, _)| k == "content-type").map(|(_, v)| v.as_str());
+        let ct = headers
+            .iter()
+            .find(|(k, _)| k == "content-type")
+            .map(|(_, v)| v.as_str());
         assert_eq!(ct, Some("application/x-ns-proxy-autoconfig; charset=utf-8"));
 
         let body_str = String::from_utf8_lossy(&body);
-        let expected_proxy_line = format!("var proxy = \"PROXY {}:{}; DIRECT\";", exp_host, exp_port);
+        let expected_proxy_line =
+            format!("var proxy = \"PROXY {}:{}; DIRECT\";", exp_host, exp_port);
         assert!(
             body_str.contains(&expected_proxy_line),
             "PAC body does not contain expected line: {}\nActual snippet: {}",
@@ -495,22 +520,56 @@ async fn test_empirical_apple_mobileconfig_plist_integrity() {
     let server = EmpiricalWebServer::start().await;
 
     let profile_endpoints = vec![
-        ("/supercell.mobileconfig", "Supercell_Gaming_COMSS.mobileconfig", "dns.comss.one", "HTTPS"),
-        ("/nullsproxy.mobileconfig", "NullsProxy_Gaming.mobileconfig", "dns.nullsproxy.com", "TLS"),
-        ("/brawlstars.mobileconfig", "Supercell_Gaming_COMSS.mobileconfig", "dns.comss.one", "HTTPS"),
-        ("/clashroyale.mobileconfig", "Supercell_Gaming_COMSS.mobileconfig", "dns.comss.one", "HTTPS"),
-        ("/comss.mobileconfig", "Supercell_Gaming_COMSS.mobileconfig", "dns.comss.one", "HTTPS"),
+        (
+            "/supercell.mobileconfig",
+            "Supercell_Gaming_COMSS.mobileconfig",
+            "dns.comss.one",
+            "HTTPS",
+        ),
+        (
+            "/nullsproxy.mobileconfig",
+            "NullsProxy_Gaming.mobileconfig",
+            "dns.nullsproxy.com",
+            "TLS",
+        ),
+        (
+            "/brawlstars.mobileconfig",
+            "Supercell_Gaming_COMSS.mobileconfig",
+            "dns.comss.one",
+            "HTTPS",
+        ),
+        (
+            "/clashroyale.mobileconfig",
+            "Supercell_Gaming_COMSS.mobileconfig",
+            "dns.comss.one",
+            "HTTPS",
+        ),
+        (
+            "/comss.mobileconfig",
+            "Supercell_Gaming_COMSS.mobileconfig",
+            "dns.comss.one",
+            "HTTPS",
+        ),
     ];
 
     for (path, exp_filename, exp_server, exp_protocol) in profile_endpoints {
-        let req = format!("GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", path);
+        let req = format!(
+            "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            path
+        );
         let (status, headers, body) = server.send_raw(&req).await.unwrap();
         assert_eq!(status, 200, "Path {} must return 200", path);
 
-        let ct = headers.iter().find(|(k, _)| k == "content-type").map(|(_, v)| v.as_str());
+        let ct = headers
+            .iter()
+            .find(|(k, _)| k == "content-type")
+            .map(|(_, v)| v.as_str());
         assert_eq!(ct, Some("application/x-apple-aspen-config; charset=utf-8"));
 
-        let cd = headers.iter().find(|(k, _)| k == "content-disposition").map(|(_, v)| v.as_str());
+        let cd = headers
+            .iter()
+            .find(|(k, _)| k == "content-disposition")
+            .map(|(_, v)| v.as_str());
         let expected_cd = format!("attachment; filename=\"{}\"", exp_filename);
         assert_eq!(cd, Some(expected_cd.as_str()));
 
@@ -531,7 +590,10 @@ async fn test_empirical_apple_mobileconfig_plist_integrity() {
 
         // 4. PayloadUUID format validation (8-4-4-4-12 hex format)
         let uuid_indices: Vec<_> = xml_str.match_indices("<key>PayloadUUID</key>").collect();
-        assert!(uuid_indices.len() >= 2, "Mobileconfig must contain at least 2 PayloadUUIDs (inner and outer)");
+        assert!(
+            uuid_indices.len() >= 2,
+            "Mobileconfig must contain at least 2 PayloadUUIDs (inner and outer)"
+        );
 
         // 5. Server URL / Name and DNS protocol
         assert!(xml_str.contains(exp_server));
@@ -544,7 +606,8 @@ async fn test_empirical_apple_mobileconfig_plist_integrity() {
         assert!(xml_str.contains("<string>Cellular</string>"));
 
         // 7. XML Well-formedness check via Powershell [xml] parser
-        let temp_xml = std::env::temp_dir().join(format!("mobileconfig_val_{}.xml", std::process::id()));
+        let temp_xml =
+            std::env::temp_dir().join(format!("mobileconfig_val_{}.xml", std::process::id()));
         fs::write(&temp_xml, xml_str.as_bytes()).unwrap();
 
         let ps_cmd = format!(
@@ -560,7 +623,11 @@ async fn test_empirical_apple_mobileconfig_plist_integrity() {
 
         let _ = fs::remove_file(&temp_xml);
         let ps_res = String::from_utf8_lossy(&ps_out.stdout).trim().to_string();
-        assert_eq!(ps_res, "XML_VALID", "PowerShell XML parser failed to parse plist for path {}", path);
+        assert_eq!(
+            ps_res, "XML_VALID",
+            "PowerShell XML parser failed to parse plist for path {}",
+            path
+        );
     }
 }
 
@@ -577,10 +644,14 @@ async fn test_empirical_health_and_telemetry_accuracy() {
     let (status, headers, body) = server.send_raw(req).await.unwrap();
     assert_eq!(status, 200);
 
-    let ct = headers.iter().find(|(k, _)| k == "content-type").map(|(_, v)| v.as_str());
+    let ct = headers
+        .iter()
+        .find(|(k, _)| k == "content-type")
+        .map(|(_, v)| v.as_str());
     assert_eq!(ct, Some("application/json"));
 
-    let health: HealthResponse = serde_json::from_slice(&body).expect("Failed to deserialize /health JSON");
+    let health: HealthResponse =
+        serde_json::from_slice(&body).expect("Failed to deserialize /health JSON");
     assert_eq!(health.status, "ok");
     assert_eq!(health.service, "ZapretTVBridge");
     assert_eq!(health.version, env!("CARGO_PKG_VERSION"));
@@ -594,7 +665,8 @@ async fn test_empirical_health_and_telemetry_accuracy() {
     let req_stats = "GET /api/stats HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
     let (status2, _, body2) = server.send_raw(req_stats).await.unwrap();
     assert_eq!(status2, 200);
-    let stats: StatsResponse = serde_json::from_slice(&body2).expect("Failed to deserialize /api/stats JSON");
+    let stats: StatsResponse =
+        serde_json::from_slice(&body2).expect("Failed to deserialize /api/stats JSON");
     assert!(stats.active_connections >= 1);
     assert_eq!(stats.bytes_client_to_remote, 0);
     assert_eq!(stats.bytes_remote_to_client, 0);
@@ -611,11 +683,17 @@ async fn test_empirical_health_and_telemetry_accuracy() {
         .expect("HTTP CONNECT tunnel to echo server failed");
     assert_eq!(tunnel_status, 200);
 
-    client.write_all(&payload).await.expect("Failed to write upstream data");
+    client
+        .write_all(&payload)
+        .await
+        .expect("Failed to write upstream data");
     client.flush().await.expect("Flush failed");
 
     let mut recv_buf = vec![0u8; 8192];
-    client.read_exact(&mut recv_buf).await.expect("Failed to read downstream echoed data");
+    client
+        .read_exact(&mut recv_buf)
+        .await
+        .expect("Failed to read downstream echoed data");
     assert_eq!(recv_buf, payload);
 
     // Drop client stream to terminate connection cleanly
@@ -665,16 +743,26 @@ async fn test_empirical_health_and_telemetry_accuracy() {
     // When idle (no HTTP request in-flight), server metrics active_connections must be 0
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(
-        server.metrics.snapshot().active_connections, 0,
+        server.metrics.snapshot().active_connections,
+        0,
         "Active connections in server metrics must return to 0 when idle"
     );
 
     // Verify /health metrics match /api/stats
     let (_, _, body_h2) = server.send_raw(req).await.unwrap();
     let health2: HealthResponse = serde_json::from_slice(&body_h2).unwrap();
-    assert_eq!(health2.metrics.total_connections, updated_stats.total_connections + 1);
-    assert_eq!(health2.metrics.bytes_client_to_remote, updated_stats.bytes_client_to_remote);
-    assert_eq!(health2.metrics.bytes_remote_to_client, updated_stats.bytes_remote_to_client);
+    assert_eq!(
+        health2.metrics.total_connections,
+        updated_stats.total_connections + 1
+    );
+    assert_eq!(
+        health2.metrics.bytes_client_to_remote,
+        updated_stats.bytes_client_to_remote
+    );
+    assert_eq!(
+        health2.metrics.bytes_remote_to_client,
+        updated_stats.bytes_remote_to_client
+    );
     assert!(health2.metrics.active_connections >= 1);
 }
 
@@ -685,9 +773,15 @@ async fn test_empirical_health_and_telemetry_accuracy() {
 #[test]
 fn test_empirical_zero_trigger_words_compliance() {
     let p1: [u8; 10] = [0xd0, 0xbe, 0xd0, 0xb1, 0xd1, 0x85, 0xd0, 0xbe, 0xd0, 0xb4];
-    let p2: [u8; 18] = [0xd0, 0xb1, 0xd0, 0xbb, 0xd0, 0xbe, 0xd0, 0xba, 0xd0, 0xb8, 0xd1, 0x80, 0xd0, 0xbe, 0xd0, 0xb2, 0xd0, 0xba];
+    let p2: [u8; 18] = [
+        0xd0, 0xb1, 0xd0, 0xbb, 0xd0, 0xbe, 0xd0, 0xba, 0xd0, 0xb8, 0xd1, 0x80, 0xd0, 0xbe, 0xd0,
+        0xb2, 0xd0, 0xba,
+    ];
     let p3: [u8; 6] = [0xd1, 0x80, 0xd0, 0xba, 0xd0, 0xbd];
-    let p4: [u8; 24] = [0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0, 0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80];
+    let p4: [u8; 24] = [
+        0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0,
+        0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80,
+    ];
     let p5: [u8; 6] = [0x62, 0x79, 0x70, 0x61, 0x73, 0x73];
     let forbidden: &[(&str, &[u8])] = &[
         ("Term-1", &p1),
@@ -698,7 +792,11 @@ fn test_empirical_zero_trigger_words_compliance() {
     ];
     let root = Path::new("d:\\projects\\zapret-tv-bridge\\bridge-rs");
 
-    fn scan_dir(dir: &Path, forbidden: &[(&str, &[u8])], violations: &mut Vec<(String, usize, String)>) {
+    fn scan_dir(
+        dir: &Path,
+        forbidden: &[(&str, &[u8])],
+        violations: &mut Vec<(String, usize, String)>,
+    ) {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -769,7 +867,10 @@ async fn test_empirical_stress_and_adversarial_resilience() {
         };
         handles.push(tokio::spawn(async move {
             let mut s = TcpStream::connect(addr).await.unwrap();
-            let req = format!("GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", endpoint);
+            let req = format!(
+                "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                endpoint
+            );
             s.write_all(req.as_bytes()).await.unwrap();
             let mut buf = Vec::new();
             s.read_to_end(&mut buf).await.unwrap();
@@ -797,7 +898,10 @@ async fn test_empirical_stress_and_adversarial_resilience() {
         "/health/../../../main.rs",
     ];
     for bad_path in malicious_paths {
-        let req = format!("GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", bad_path);
+        let req = format!(
+            "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            bad_path
+        );
         let (status, _, body) = server.send_raw(&req).await.unwrap();
         assert_eq!(
             status, 404,
@@ -823,11 +927,17 @@ async fn test_empirical_stress_and_adversarial_resilience() {
     let req_dash = "GET / HTTP/1.1\r\nHost: 192.168.1.150:8080\r\nConnection: close\r\n\r\n";
     let (status, headers, body) = server.send_raw(req_dash).await.unwrap();
     assert_eq!(status, 200);
-    let ct = headers.iter().find(|(k, _)| k == "content-type").map(|(_, v)| v.as_str());
+    let ct = headers
+        .iter()
+        .find(|(k, _)| k == "content-type")
+        .map(|(_, v)| v.as_str());
     assert_eq!(ct, Some("text/html; charset=utf-8"));
     let html = String::from_utf8_lossy(&body);
     assert!(html.contains("<!DOCTYPE html>"));
-    assert!(html.contains("Zapret TV &amp; Mobile Bridge") || html.contains("Zapret TV & Mobile Bridge"));
+    assert!(
+        html.contains("Zapret TV &amp; Mobile Bridge")
+            || html.contains("Zapret TV & Mobile Bridge")
+    );
     assert!(html.contains("РАБОТАЕТ"));
     assert!(html.contains("http://192.168.1.150:8080/proxy.pac"));
     assert!(html.contains("/supercell.mobileconfig"));

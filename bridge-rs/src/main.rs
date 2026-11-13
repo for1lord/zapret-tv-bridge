@@ -15,7 +15,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     if args.iter().any(|a| a == "--version" || a == "-v") {
-        println!("Zapret TV & Mobile Bridge (Rust Core) v{}", env!("CARGO_PKG_VERSION"));
+        println!(
+            "Zapret TV & Mobile Bridge (Rust Core) v{}",
+            env!("CARGO_PKG_VERSION")
+        );
         return Ok(());
     }
 
@@ -49,11 +52,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu::cmd_fix_proxy();
         return Ok(());
     }
-    if args.iter().any(|a| a == "--optimize-browsers" || a == "--fix-browsers") {
+    if args
+        .iter()
+        .any(|a| a == "--optimize-browsers" || a == "--fix-browsers")
+    {
         menu::cmd_optimize_browsers();
         return Ok(());
     }
-    if args.iter().any(|a| a == "--parse-rules" || a == "--sync-rules") {
+    if args
+        .iter()
+        .any(|a| a == "--parse-rules" || a == "--sync-rules")
+    {
         menu::ensure_admin(&args);
         menu::cmd_sync_rules(&base_dir);
         return Ok(());
@@ -157,15 +166,16 @@ fn get_base_dir() -> PathBuf {
         exe_dir.join("..")
     } else if exe_dir.join("..").join("..").join("lists").exists() {
         exe_dir.join("..").join("..")
-    } else if PathBuf::from("d:\\projects\\zapret-tv-bridge\\lists").exists() {
-        PathBuf::from("d:\\projects\\zapret-tv-bridge")
     } else {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 }
 
 fn print_help() {
-    println!("Zapret TV & Mobile Bridge (Rust Native Core) v{}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Zapret TV & Mobile Bridge (Rust Native Core) v{}",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("Usage: ZapretTVBridge [OPTIONS]\n");
     println!("Options:");
     println!("  --menu             Launch interactive console manager (default if double-clicked)");
@@ -181,7 +191,9 @@ fn print_help() {
     println!("  --startup-disable  Disable Windows Startup");
     println!("  --firewall         Configure Windows Firewall rules");
     println!("  --fix-proxy        Reset Windows system proxy");
-    println!("  --optimize-browsers Enable multi-threaded parallel downloading in Chromium browsers");
+    println!(
+        "  --optimize-browsers Enable multi-threaded parallel downloading in Chromium browsers"
+    );
     println!("  --test             Run network latency and DNS tests");
     println!("  -h, --help         Print help information");
     println!("  -v, --version      Print version information\n");
@@ -190,6 +202,10 @@ fn print_help() {
     println!("  BRIDGE_SOCKS5_ADDR Dedicated SOCKS5 address (default: 0.0.0.0:1080)");
     println!("  BRIDGE_TG_PORT     Telegram Gateway port (default: 1443)");
     println!("  BRIDGE_TG_SECRET   Hex secret (32, 34 with 'dd', or 34+domain with 'ee')");
+    println!("  BRIDGE_TG_ENGINE   builtin (default), external, or python");
+    println!(
+        "                     python installs requirements.txt on startup if modules are missing"
+    );
 }
 
 struct PidCleanup {
@@ -220,7 +236,10 @@ fn find_python_binary() -> Option<PathBuf> {
     }
 
     for cmd_name in &["pythonw", "python"] {
-        if let Ok(output) = std::process::Command::new("where.exe").arg(cmd_name).output() {
+        if let Ok(output) = std::process::Command::new("where.exe")
+            .arg(cmd_name)
+            .output()
+        {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
@@ -254,6 +273,70 @@ fn find_python_binary() -> Option<PathBuf> {
     None
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TgEngine {
+    /// Built-in gateway. No Python and no extra packages.
+    Builtin,
+    /// Bundled tgwsproxy.exe when the file is present, otherwise the built-in gateway.
+    Auto,
+    /// Always the bundled executable.
+    External,
+    /// Python proxy. Missing modules are installed from requirements.txt first.
+    Python,
+}
+
+fn selected_tg_engine() -> TgEngine {
+    match std::env::var("BRIDGE_TG_ENGINE")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("python") => TgEngine::Python,
+        Some("external") | Some("exe") => TgEngine::External,
+        Some("builtin") | Some("rust") => TgEngine::Builtin,
+        Some("auto") => TgEngine::Auto,
+        _ => TgEngine::Auto,
+    }
+}
+
+fn requirements_file(base_dir: &std::path::Path) -> Option<PathBuf> {
+    let candidates = [
+        base_dir.join("requirements.txt"),
+        base_dir.join("..").join("requirements.txt"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+fn python_modules_ready(python: &std::path::Path) -> bool {
+    std::process::Command::new(python)
+        .args(["-c", "import httpx, h2, certifi"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Installs requirements.txt when the Python Telegram proxy is explicitly selected.
+fn ensure_python_requirements(python: &std::path::Path, base_dir: &std::path::Path) -> bool {
+    if python_modules_ready(python) {
+        return true;
+    }
+    let Some(req) = requirements_file(base_dir) else {
+        eprintln!("[TgWsProxy] requirements.txt не найден, Python-прокси не запущен");
+        return false;
+    };
+    eprintln!(
+        "[TgWsProxy] Ставлю зависимости Python из {} ...",
+        req.display()
+    );
+    let installed = std::process::Command::new(python)
+        .args(["-m", "pip", "install", "--disable-pip-version-check", "-r"])
+        .arg(&req)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    installed && python_modules_ready(python)
+}
+
 /// Ensures Telegram proxy port (default: 1443) is free from previous/stale instances.
 fn stop_recorded_tg_pid(base_dir: &std::path::Path) {
     let tg_pid_file = base_dir.join("tg_proxy.pid");
@@ -267,9 +350,80 @@ fn stop_recorded_tg_pid(base_dir: &std::path::Path) {
     let _ = std::fs::remove_file(&tg_pid_file);
 }
 
-fn spawn_tgws_exe(exe: &std::path::Path, port: u16, secret: &str, base: &std::path::Path) -> std::io::Result<std::process::Child> {
+fn spawn_tg_python(
+    python: &std::path::Path,
+    workdir: &std::path::Path,
+    port: u16,
+    secret: &str,
+) -> std::io::Result<std::process::Child> {
+    let mut cmd = std::process::Command::new(python);
+    cmd.args([
+        "-m",
+        "proxy.tg_ws_proxy",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        &port.to_string(),
+        "--secret",
+        secret,
+    ]);
+    for dc in TG_DC_ENDPOINTS {
+        cmd.arg("--dc-ip").arg(dc);
+    }
+    let log = workdir.join("tg_proxy.log");
+    if let Some(path) = log.to_str() {
+        cmd.args(["--log-file", path]);
+    }
+    cmd.current_dir(workdir);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.spawn()
+}
+
+fn spawn_builtin_gateway(
+    tg_addr: SocketAddr,
+    tg_secret: [u8; 16],
+    tg_masking: Option<String>,
+    metrics: Arc<metrics::ProxyMetrics>,
+    is_daemon: bool,
+    tg_port: u16,
+) -> tokio::task::JoinHandle<Result<(), std::io::Error>> {
+    if !is_daemon {
+        println!("[*] Telegram gateway (встроенный, без Python) слушает 0.0.0.0:{tg_port}");
+    }
+    let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+        tg_addr,
+        tg_secret,
+        tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
+    );
+    tokio::spawn(async move {
+        if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, metrics).await {
+            eprintln!("[TgGateway] listener notice on {tg_addr}: {e}");
+            Err(e)
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn spawn_tgws_exe(
+    exe: &std::path::Path,
+    port: u16,
+    secret: &str,
+    base: &std::path::Path,
+) -> std::io::Result<std::process::Child> {
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(["--host", "0.0.0.0", "--port", &port.to_string(), "--secret", secret]);
+    cmd.args([
+        "--host",
+        "0.0.0.0",
+        "--port",
+        &port.to_string(),
+        "--secret",
+        secret,
+    ]);
     for dc in TG_DC_ENDPOINTS {
         cmd.arg("--dc-ip").arg(dc);
     }
@@ -452,8 +606,15 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         None
     };
     let python_bin = find_python_binary();
+    let engine = selected_tg_engine();
+    let prefer_exe = match engine {
+        TgEngine::External => true,
+        TgEngine::Auto => standalone_tg_exe.is_some(),
+        TgEngine::Builtin | TgEngine::Python => false,
+    };
+    let prefer_python = engine == TgEngine::Python;
 
-    let mut _tg_handle = if let Some(exe_path) = standalone_tg_exe {
+    let mut _tg_handle = if let Some(exe_path) = standalone_tg_exe.filter(|_| prefer_exe) {
         stop_recorded_tg_pid(&base_dir);
 
         let mut cmd = std::process::Command::new(&exe_path);
@@ -506,7 +667,8 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                                 match spawn_tgws_exe(&exe_bg, port_bg, &secret_bg, &base_bg) {
                                     Ok(next) => {
-                                        let _ = std::fs::write(&pid_file_copy, next.id().to_string());
+                                        let _ =
+                                            std::fs::write(&pid_file_copy, next.id().to_string());
                                         child = next;
                                     }
                                     Err(e) => eprintln!("[TgWsProxy] restart failed: {e}"),
@@ -517,122 +679,161 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                 })
             }
             Err(e) => {
-                eprintln!("[TgWsProxy] Failed to spawn standalone tgwsproxy via {:?}: {}", exe_path, e);
-                let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+                eprintln!(
+                    "[TgWsProxy] Failed to spawn standalone tgwsproxy via {:?}: {}",
+                    exe_path, e
+                );
+                spawn_builtin_gateway(
                     tg_addr,
                     tg_secret,
-                    tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
-                );
-                let m3 = Arc::clone(&metrics);
-                tokio::spawn(async move {
-                    if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
-                        eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
-                        Err(e)
-                    } else {
-                        Ok(())
-                    }
-                })
+                    tg_masking.clone(),
+                    Arc::clone(&metrics),
+                    is_daemon,
+                    tg_port,
+                )
             }
         }
-    } else if let (Some(tg_dir), Some(py_bin)) = (tg_proxy_dir, python_bin) {
-        stop_recorded_tg_pid(&base_dir);
+    } else if prefer_python {
+        if let (Some(tg_dir), Some(py_bin)) = (tg_proxy_dir, python_bin) {
+            if !ensure_python_requirements(&py_bin, &base_dir) {
+                eprintln!("[TgWsProxy] Не удалось поставить зависимости Python. Встроенный шлюз.");
+                spawn_builtin_gateway(
+                    tg_addr,
+                    tg_secret,
+                    tg_masking.clone(),
+                    Arc::clone(&metrics),
+                    is_daemon,
+                    tg_port,
+                )
+            } else {
+                stop_recorded_tg_pid(&base_dir);
 
-        let mut cmd = std::process::Command::new(&py_bin);
-        cmd.args(&[
-            "-m",
-            "proxy.tg_ws_proxy",
-            "--host",
-            "0.0.0.0",
-            "--port",
-            &tg_port.to_string(),
-            "--secret",
-            &tg_process_secret,
-        ]);
-        for dc in TG_DC_ENDPOINTS {
-            cmd.arg("--dc-ip").arg(dc);
-        }
-        let tg_log_path = base_dir.join("tg_proxy.log");
-        if let Some(s) = tg_log_path.to_str() {
-            cmd.args(&["--log-file", s]);
-        }
-        cmd.current_dir(&tg_dir);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
+                let mut cmd = std::process::Command::new(&py_bin);
+                cmd.args(&[
+                    "-m",
+                    "proxy.tg_ws_proxy",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    &tg_port.to_string(),
+                    "--secret",
+                    &tg_process_secret,
+                ]);
+                for dc in TG_DC_ENDPOINTS {
+                    cmd.arg("--dc-ip").arg(dc);
+                }
+                let tg_log_path = base_dir.join("tg_proxy.log");
+                if let Some(s) = tg_log_path.to_str() {
+                    cmd.args(&["--log-file", s]);
+                }
+                cmd.current_dir(&tg_dir);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x08000000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
 
-        match cmd.spawn() {
-            Ok(mut child) => {
-                let c_pid = child.id();
-                let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
-                if !is_daemon {
-                    println!(
+                match cmd.spawn() {
+                    Ok(mut child) => {
+                        let c_pid = child.id();
+                        let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
+                        if !is_daemon {
+                            println!(
                         "[*] Telegram WS Proxy (tgwsproxy python) запущен на 0.0.0.0:{} [PID: {}]",
                         tg_port, c_pid
                     );
-                }
-                let pid_file_copy = tg_pid_file.clone();
-                tokio::spawn(async move {
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-                        match child.try_wait() {
-                            Ok(Some(status)) => {
-                                eprintln!(
-                                    "[TgWsProxy] process exited ({status:?}). HTTP proxy keeps running"
-                                );
-                                let _ = std::fs::remove_file(&pid_file_copy);
-                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-                                return Ok(());
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
-                                eprintln!("[TgWsProxy] wait failed: {e}. HTTP proxy keeps running");
-                                let _ = std::fs::remove_file(&pid_file_copy);
-                                return Ok(());
-                            }
                         }
+                        let pid_file_copy = tg_pid_file.clone();
+                        let py_bg = py_bin.clone();
+                        let dir_bg = tg_dir.clone();
+                        let secret_bg = tg_process_secret.clone();
+                        let port_bg = tg_port;
+                        tokio::spawn(async move {
+                            let mut fast_exits = 0u32;
+                            loop {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                                match child.try_wait() {
+                                    Ok(Some(status)) => {
+                                        fast_exits += 1;
+                                        if fast_exits >= 3 {
+                                            eprintln!(
+                                        "[TgWsProxy] python proxy exited ({status:?}) three times. Останавливаю перезапуск; HTTP-прокси продолжает работать. Запуск без Python: уберите BRIDGE_TG_ENGINE=python"
+                                    );
+                                            let _ = std::fs::remove_file(&pid_file_copy);
+                                            return Ok(());
+                                        }
+                                        eprintln!(
+                                    "[TgWsProxy] python proxy exited ({status:?}). Restarting in 3s; HTTP proxy stays up"
+                                );
+                                        tokio::time::sleep(tokio::time::Duration::from_secs(3))
+                                            .await;
+                                        match spawn_tg_python(&py_bg, &dir_bg, port_bg, &secret_bg)
+                                        {
+                                            Ok(next) => {
+                                                let _ = std::fs::write(
+                                                    &pid_file_copy,
+                                                    next.id().to_string(),
+                                                );
+                                                child = next;
+                                            }
+                                            Err(e) => {
+                                                eprintln!("[TgWsProxy] python restart failed: {e}")
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => {
+                                        eprintln!("[TgWsProxy] wait failed: {e}. HTTP proxy keeps running");
+                                        let _ = std::fs::remove_file(&pid_file_copy);
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        })
                     }
-                })
-            }
-            Err(e) => {
-                eprintln!("[TgWsProxy] Failed to spawn tgwsproxy via {:?}: {}", py_bin, e);
-                let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
-                    tg_addr,
-                    tg_secret,
-                    tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
-                );
-                let m3 = Arc::clone(&metrics);
-                tokio::spawn(async move {
-                    if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
-                        eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
-                        Err(e)
-                    } else {
-                        Ok(())
+                    Err(e) => {
+                        eprintln!(
+                            "[TgWsProxy] Failed to spawn tgwsproxy via {:?}: {}",
+                            py_bin, e
+                        );
+                        spawn_builtin_gateway(
+                            tg_addr,
+                            tg_secret,
+                            tg_masking.clone(),
+                            Arc::clone(&metrics),
+                            is_daemon,
+                            tg_port,
+                        )
                     }
-                })
+                }
             }
+        } else {
+            eprintln!("[TgWsProxy] Python или каталог tg_ws_proxy не найдены. Встроенный шлюз.");
+            spawn_builtin_gateway(
+                tg_addr,
+                tg_secret,
+                tg_masking.clone(),
+                Arc::clone(&metrics),
+                is_daemon,
+                tg_port,
+            )
         }
     } else {
-        let tg_config = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+        spawn_builtin_gateway(
             tg_addr,
             tg_secret,
-            tg_masking.or_else(|| std::env::var("BRIDGE_TG_MASKING").ok()),
-        );
-        let m3 = Arc::clone(&metrics);
-        tokio::spawn(async move {
-            if let Err(e) = zapret_tv_bridge_rs::faketls::run_tg_gateway(tg_config, m3).await {
-                eprintln!("[TgGateway] FakeTLS listener notice on {tg_addr}: {e}");
-                Err(e)
-            } else {
-                Ok(())
-            }
-        })
+            tg_masking.clone(),
+            Arc::clone(&metrics),
+            is_daemon,
+            tg_port,
+        )
     };
 
     if !is_daemon {
-        println!("[*] Ready for 4K video streaming, low-latency proxying, and Telegram MTProto Gateway.");
+        println!(
+            "[*] Ready for 4K video streaming, low-latency proxying, and Telegram MTProto Gateway."
+        );
         println!(
             "[*] Autodetect proxy: {}, Dedicated SOCKS5: {}, TG Gateway: 0.0.0.0:{}",
             http_addr, socks5_addr, tg_port
@@ -688,7 +889,10 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
 
     let drain_start = std::time::Instant::now();
     let drain_timeout = std::time::Duration::from_secs(3);
-    while metrics.active_connections.load(std::sync::atomic::Ordering::Relaxed) > 0
+    while metrics
+        .active_connections
+        .load(std::sync::atomic::Ordering::Relaxed)
+        > 0
         && drain_start.elapsed() < drain_timeout
     {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

@@ -150,8 +150,8 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
     const CONNECT_TUNNELS: usize = 12;
     const SOCKS5_TUNNELS: usize = 12;
     const STREAM_CHUNK_SIZE: usize = 32 * 1024; // 32 KB per chunk
-    const STREAM_CHUNKS: usize = 32;            // 32 chunks = 1 MB per tunnel
-    const BURST_WEB_REQUESTS: usize = 120;       // 120 concurrent local web requests
+    const STREAM_CHUNKS: usize = 32; // 32 chunks = 1 MB per tunnel
+    const BURST_WEB_REQUESTS: usize = 120; // 120 concurrent local web requests
 
     println!(
         "\n[Stress Test 1] Launching {} CONNECT tunnels (1 MB each), {} SOCKS5 tunnels (1 MB each), and {} concurrent local web requests...",
@@ -178,9 +178,18 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
 
             let mut echo_buf = vec![0u8; STREAM_CHUNK_SIZE];
             for _ in 0..STREAM_CHUNKS {
-                tunnel.write_all(&write_buf).await.expect("Write to tunnel failed");
-                tunnel.read_exact(&mut echo_buf).await.expect("Read exact from tunnel failed");
-                assert_eq!(echo_buf, write_buf, "Corrupted binary data in CONNECT tunnel");
+                tunnel
+                    .write_all(&write_buf)
+                    .await
+                    .expect("Write to tunnel failed");
+                tunnel
+                    .read_exact(&mut echo_buf)
+                    .await
+                    .expect("Read exact from tunnel failed");
+                assert_eq!(
+                    echo_buf, write_buf,
+                    "Corrupted binary data in CONNECT tunnel"
+                );
             }
             drop(tunnel);
         }));
@@ -192,7 +201,9 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
         let p_addr = harness.addr;
         let echo_port = echo.port();
         socks5_handles.push(tokio::spawn(async move {
-            let mut stream = TcpStream::connect(p_addr).await.expect("SOCKS5 connect failed");
+            let mut stream = TcpStream::connect(p_addr)
+                .await
+                .expect("SOCKS5 connect failed");
             let auth = socks5_handshake(&mut stream, &[0x00])
                 .await
                 .expect("SOCKS5 greeting failed");
@@ -210,9 +221,18 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
 
             let mut echo_buf = vec![0u8; STREAM_CHUNK_SIZE];
             for _ in 0..STREAM_CHUNKS {
-                stream.write_all(&write_buf).await.expect("Write to SOCKS5 tunnel failed");
-                stream.read_exact(&mut echo_buf).await.expect("Read exact from SOCKS5 tunnel failed");
-                assert_eq!(echo_buf, write_buf, "Corrupted binary data in SOCKS5 tunnel");
+                stream
+                    .write_all(&write_buf)
+                    .await
+                    .expect("Write to SOCKS5 tunnel failed");
+                stream
+                    .read_exact(&mut echo_buf)
+                    .await
+                    .expect("Read exact from SOCKS5 tunnel failed");
+                assert_eq!(
+                    echo_buf, write_buf,
+                    "Corrupted binary data in SOCKS5 tunnel"
+                );
             }
             drop(stream);
         }));
@@ -223,7 +243,9 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
 
     // 3. Fire burst of 120 concurrent local HTTP requests during active streaming
     let mut web_handles = Vec::new();
-    let latencies = Arc::new(parking_lot::Mutex::new(Vec::with_capacity(BURST_WEB_REQUESTS)));
+    let latencies = Arc::new(parking_lot::Mutex::new(Vec::with_capacity(
+        BURST_WEB_REQUESTS,
+    )));
 
     for req_idx in 0..BURST_WEB_REQUESTS {
         let p_addr = harness.addr;
@@ -241,17 +263,28 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
             );
 
             let t0 = Instant::now();
-            let mut stream = TcpStream::connect(p_addr).await.expect("Web connect failed");
-            stream.write_all(req_str.as_bytes()).await.expect("Web write failed");
+            let mut stream = TcpStream::connect(p_addr)
+                .await
+                .expect("Web connect failed");
+            stream
+                .write_all(req_str.as_bytes())
+                .await
+                .expect("Web write failed");
 
             let mut resp_buf = Vec::new();
-            stream.read_to_end(&mut resp_buf).await.expect("Web read failed");
+            stream
+                .read_to_end(&mut resp_buf)
+                .await
+                .expect("Web read failed");
             let elapsed = t0.elapsed();
 
-            let (status, _headers, body) = parse_raw_http_response(&resp_buf)
-                .expect("Failed to parse HTTP response");
+            let (status, _headers, body) =
+                parse_raw_http_response(&resp_buf).expect("Failed to parse HTTP response");
 
-            assert_eq!(status, 200, "Local request to {path} returned status {status}");
+            assert_eq!(
+                status, 200,
+                "Local request to {path} returned status {status}"
+            );
             let body_str = String::from_utf8_lossy(&body);
             assert!(
                 body_str.contains(expected_substr),
@@ -288,7 +321,8 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
     let max_lat = lat_sorted.last().copied().unwrap_or_default();
     let p50_lat = lat_sorted[lat_sorted.len() / 2];
     let p95_lat = lat_sorted[(lat_sorted.len() * 95) / 100];
-    let avg_lat: Duration = recorded_latencies.iter().sum::<Duration>() / (recorded_latencies.len() as u32);
+    let avg_lat: Duration =
+        recorded_latencies.iter().sum::<Duration>() / (recorded_latencies.len() as u32);
 
     println!(
         "[Stress Test 1 PASSED in {:.2?}] All {} web requests returned 200 OK without tunnel degradation!\n  Latency: min={:?}, avg={:?}, p50={:?}, p95={:?}, max={:?}",
@@ -304,14 +338,18 @@ async fn test_empirical_interleaved_protocol_multiplexing() {
 
     // Check proxy metrics
     let snap = harness.metrics.snapshot();
-    let expected_tunnel_bytes = (CONNECT_TUNNELS + SOCKS5_TUNNELS) * STREAM_CHUNK_SIZE * STREAM_CHUNKS;
+    let expected_tunnel_bytes =
+        (CONNECT_TUNNELS + SOCKS5_TUNNELS) * STREAM_CHUNK_SIZE * STREAM_CHUNKS;
     assert!(
         snap.bytes_client_to_remote >= expected_tunnel_bytes as u64,
         "Proxy metrics bytes_up ({}) < expected ({})",
         snap.bytes_client_to_remote,
         expected_tunnel_bytes
     );
-    assert_eq!(snap.errors_count, 0, "No errors expected during normal multiplexing");
+    assert_eq!(
+        snap.errors_count, 0,
+        "No errors expected during normal multiplexing"
+    );
 }
 
 // =========================================================================
@@ -351,14 +389,17 @@ async fn test_empirical_connection_lifecycle_and_leak_resistance() {
                 2 => {
                     // Variant C: Connect, send truncated HTTP request line without CRLF CRLF, then drop
                     if let Ok(mut stream) = TcpStream::connect(p_addr).await {
-                        let _ = stream.write_all(b"GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1").await;
+                        let _ = stream
+                            .write_all(b"GET /proxy.pac HTTP/1.1\r\nHost: 127.0.0.1")
+                            .await;
                         drop(stream);
                     }
                 }
                 3 => {
                     // Variant D: Connect, send valid GET /health request, then immediately send TCP RST
                     if let Ok(mut stream) = TcpStream::connect(p_addr).await {
-                        let req = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+                        let req =
+                            b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
                         let _ = stream.write_all(req).await;
                         // Set linger = 0 to trigger immediate TCP RST on drop
                         if let Ok(std_stream) = stream.into_std() {
@@ -424,11 +465,15 @@ async fn test_empirical_connection_lifecycle_and_leak_resistance() {
         .read_to_end(&mut probe_buf)
         .await
         .expect("Probe read failed");
-    let (status, _, body) = parse_raw_http_response(&probe_buf).expect("Probe response parse failed");
+    let (status, _, body) =
+        parse_raw_http_response(&probe_buf).expect("Probe response parse failed");
     assert_eq!(status, 200, "Server must remain functional after storm");
     let health: HealthResponse = serde_json::from_slice(&body).expect("Valid health JSON");
     assert_eq!(health.status, "ok");
-    println!("[Stress Test 2 PASSED] Zero leaked connections or tasks across {} rapid resets.", STORM_COUNT);
+    println!(
+        "[Stress Test 2 PASSED] Zero leaked connections or tasks across {} rapid resets.",
+        STORM_COUNT
+    );
 }
 
 // =========================================================================
@@ -471,7 +516,10 @@ async fn test_empirical_rapid_request_memory_stability() {
                 );
 
                 let mut stream = TcpStream::connect(p_addr).await.expect("Connect failed");
-                stream.write_all(req.as_bytes()).await.expect("Write failed");
+                stream
+                    .write_all(req.as_bytes())
+                    .await
+                    .expect("Write failed");
 
                 let mut buf = Vec::new();
                 stream.read_to_end(&mut buf).await.expect("Read failed");
@@ -571,7 +619,10 @@ fn test_empirical_standalone_daemon_memory_benchmark() {
         "Acceptance Criteria FAILED: Idle RAM ({:.2} MB) exceeds 15.0 MB ceiling",
         ws_mb
     );
-    println!("[Stress Test 4 PASSED] Idle RAM ({:.2} MB) is strictly <= 15.0 MB.", ws_mb);
+    println!(
+        "[Stress Test 4 PASSED] Idle RAM ({:.2} MB) is strictly <= 15.0 MB.",
+        ws_mb
+    );
 }
 
 // =========================================================================
@@ -580,7 +631,9 @@ fn test_empirical_standalone_daemon_memory_benchmark() {
 
 #[test]
 fn test_empirical_zero_trigger_words_compliance() {
-    println!("\n[Stress Test 5] Scanning source code and test files for prohibited trigger words...");
+    println!(
+        "\n[Stress Test 5] Scanning source code and test files for prohibited trigger words..."
+    );
 
     let root = Path::new("d:\\projects\\zapret-tv-bridge\\bridge-rs");
     let mut files_to_scan = Vec::new();
@@ -614,9 +667,15 @@ fn test_empirical_zero_trigger_words_compliance() {
     // P4: [0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0, 0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80]
     // P5: [0x62, 0x79, 0x70, 0x61, 0x73, 0x73]
     let pattern_p1: [u8; 10] = [0xd0, 0xbe, 0xd0, 0xb1, 0xd1, 0x85, 0xd0, 0xbe, 0xd0, 0xb4];
-    let pattern_p2: [u8; 18] = [0xd0, 0xb1, 0xd0, 0xbb, 0xd0, 0xbe, 0xd0, 0xba, 0xd0, 0xb8, 0xd1, 0x80, 0xd0, 0xbe, 0xd0, 0xb2, 0xd0, 0xba];
+    let pattern_p2: [u8; 18] = [
+        0xd0, 0xb1, 0xd0, 0xbb, 0xd0, 0xbe, 0xd0, 0xba, 0xd0, 0xb8, 0xd1, 0x80, 0xd0, 0xbe, 0xd0,
+        0xb2, 0xd0, 0xba,
+    ];
     let pattern_p3: [u8; 6] = [0xd1, 0x80, 0xd0, 0xba, 0xd0, 0xbd];
-    let pattern_p4: [u8; 24] = [0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0, 0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80];
+    let pattern_p4: [u8; 24] = [
+        0xd1, 0x80, 0xd0, 0xbe, 0xd1, 0x81, 0xd0, 0xba, 0xd0, 0xbe, 0xd0, 0xbc, 0xd0, 0xbd, 0xd0,
+        0xb0, 0xd0, 0xb4, 0xd0, 0xb7, 0xd0, 0xbe, 0xd1, 0x80,
+    ];
     let pattern_p5: [u8; 6] = [0x62, 0x79, 0x70, 0x61, 0x73, 0x73];
 
     let patterns: &[(&str, &[u8])] = &[

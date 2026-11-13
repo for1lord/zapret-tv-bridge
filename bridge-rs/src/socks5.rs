@@ -83,12 +83,20 @@ where
     let nmethods = ver_nmethods[1] as usize;
 
     if ver != SOCKS_VERSION {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported SOCKS version"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unsupported SOCKS version",
+        ));
     }
     if nmethods == 0 {
-        let _ = stream.write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE]).await;
+        let _ = stream
+            .write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE])
+            .await;
         let _ = stream.flush().await;
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "No auth methods offered"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "No auth methods offered",
+        ));
     }
 
     let mut methods = [0u8; 256];
@@ -99,9 +107,14 @@ where
         stream.flush().await?;
         Ok(())
     } else {
-        let _ = stream.write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE]).await;
+        let _ = stream
+            .write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE])
+            .await;
         let _ = stream.flush().await;
-        Err(io::Error::new(io::ErrorKind::PermissionDenied, "No acceptable auth methods"))
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "No acceptable auth methods",
+        ))
     }
 }
 
@@ -119,17 +132,49 @@ where
     let atyp = hdr[3];
 
     if ver != SOCKS_VERSION {
-        let _ = stream.write_all(&[SOCKS_VERSION, REP_GENERAL_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+        let _ = stream
+            .write_all(&[
+                SOCKS_VERSION,
+                REP_GENERAL_FAILURE,
+                0x00,
+                ATYP_IPV4,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ])
+            .await;
         let _ = stream.flush().await;
         let _ = stream.shutdown().await;
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid SOCKS version in request"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid SOCKS version in request",
+        ));
     }
 
     if rsv != 0x00 {
-        let _ = stream.write_all(&[SOCKS_VERSION, REP_GENERAL_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+        let _ = stream
+            .write_all(&[
+                SOCKS_VERSION,
+                REP_GENERAL_FAILURE,
+                0x00,
+                ATYP_IPV4,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ])
+            .await;
         let _ = stream.flush().await;
         let _ = stream.shutdown().await;
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid reserved field"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid reserved field",
+        ));
     }
 
     // Read destination address according to atyp so all request bytes are consumed
@@ -146,20 +191,52 @@ where
             stream.read_exact(&mut len_buf).await?;
             let dlen = len_buf[0] as usize;
             if dlen == 0 {
-                let _ = stream.write_all(&[SOCKS_VERSION, REP_GENERAL_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+                let _ = stream
+                    .write_all(&[
+                        SOCKS_VERSION,
+                        REP_GENERAL_FAILURE,
+                        0x00,
+                        ATYP_IPV4,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                    ])
+                    .await;
                 let _ = stream.flush().await;
                 let _ = stream.shutdown().await;
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "Domain length cannot be 0"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Domain length cannot be 0",
+                ));
             }
             let mut buf = [0u8; 257];
             stream.read_exact(&mut buf[..dlen + 2]).await?;
             let domain = match std::str::from_utf8(&buf[..dlen]) {
                 Ok(s) => s.to_string(),
                 Err(_) => {
-                    let _ = stream.write_all(&[SOCKS_VERSION, REP_GENERAL_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+                    let _ = stream
+                        .write_all(&[
+                            SOCKS_VERSION,
+                            REP_GENERAL_FAILURE,
+                            0x00,
+                            ATYP_IPV4,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                        ])
+                        .await;
                     let _ = stream.flush().await;
                     let _ = stream.shutdown().await;
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Domain name is not valid UTF-8"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Domain name is not valid UTF-8",
+                    ));
                 }
             };
             let port = u16::from_be_bytes([buf[dlen], buf[dlen + 1]]);
@@ -175,19 +252,51 @@ where
             Socks5Target::Ip(SocketAddr::new(std::net::IpAddr::V6(ip), port))
         }
         other => {
-            let _ = stream.write_all(&[SOCKS_VERSION, REP_ADDRESS_TYPE_NOT_SUPPORTED, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+            let _ = stream
+                .write_all(&[
+                    SOCKS_VERSION,
+                    REP_ADDRESS_TYPE_NOT_SUPPORTED,
+                    0x00,
+                    ATYP_IPV4,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ])
+                .await;
             let _ = stream.flush().await;
             let _ = stream.shutdown().await;
-            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("SOCKS5 address type 0x{other:02X} not supported")));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("SOCKS5 address type 0x{other:02X} not supported"),
+            ));
         }
     };
 
     if cmd != CMD_CONNECT {
         // Reject unsupported commands (e.g. BIND 0x02, UDP ASSOCIATE 0x03) with code 0x07
-        let _ = stream.write_all(&[SOCKS_VERSION, REP_COMMAND_NOT_SUPPORTED, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+        let _ = stream
+            .write_all(&[
+                SOCKS_VERSION,
+                REP_COMMAND_NOT_SUPPORTED,
+                0x00,
+                ATYP_IPV4,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ])
+            .await;
         let _ = stream.flush().await;
         let _ = stream.shutdown().await;
-        return Err(io::Error::new(io::ErrorKind::Unsupported, format!("SOCKS5 command 0x{cmd:02X} not supported")));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("SOCKS5 command 0x{cmd:02X} not supported"),
+        ));
     }
 
     Ok(target)
@@ -202,7 +311,10 @@ pub async fn handle_socks5_stream(
 ) -> io::Result<()> {
     let _conn_guard = metrics.connection_guard();
     tune_socket(&stream);
-    let peer_ok = stream.peer_addr().map(access::peer_allowed).unwrap_or(false);
+    let peer_ok = stream
+        .peer_addr()
+        .map(access::peer_allowed)
+        .unwrap_or(false);
     if !peer_ok {
         metrics.inc_errors();
         return Err(io::Error::new(
@@ -224,7 +336,10 @@ pub async fn handle_socks5_stream(
         }
         Err(_) => {
             metrics.inc_errors();
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "SOCKS5 greeting timeout"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "SOCKS5 greeting timeout",
+            ));
         }
     }
 
@@ -237,7 +352,10 @@ pub async fn handle_socks5_stream(
         }
         Err(_) => {
             metrics.inc_errors();
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "SOCKS5 request timeout"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "SOCKS5 request timeout",
+            ));
         }
     };
 
@@ -250,9 +368,25 @@ pub async fn handle_socks5_stream(
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if !upstream_allowed(ip, allow_local) {
-            let _ = stream.write_all(&[SOCKS_VERSION, REP_GENERAL_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+            let _ = stream
+                .write_all(&[
+                    SOCKS_VERSION,
+                    REP_GENERAL_FAILURE,
+                    0x00,
+                    ATYP_IPV4,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ])
+                .await;
             metrics.inc_errors();
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "upstream address is not public"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "upstream address is not public",
+            ));
         }
     }
 
@@ -261,11 +395,27 @@ pub async fn handle_socks5_stream(
     let (mut remote_stream, remote_ip, confirm_cache) = match remote_conn {
         Some(remote) => (remote.stream, remote.ip, remote.confirm_cache),
         None => {
-            let _ = stream.write_all(&[SOCKS_VERSION, REP_HOST_UNREACHABLE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+            let _ = stream
+                .write_all(&[
+                    SOCKS_VERSION,
+                    REP_HOST_UNREACHABLE,
+                    0x00,
+                    ATYP_IPV4,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                ])
+                .await;
             let _ = stream.flush().await;
             let _ = stream.shutdown().await;
             metrics.inc_errors();
-            return Err(io::Error::new(io::ErrorKind::ConnectionRefused, format!("Failed to connect to {host}:{port}")));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                format!("Failed to connect to {host}:{port}"),
+            ));
         }
     };
 
@@ -276,9 +426,31 @@ pub async fn handle_socks5_stream(
         Ok(SocketAddr::V4(v4)) => {
             let o = v4.ip().octets();
             let p = v4.port().to_be_bytes();
-            [SOCKS_VERSION, REP_SUCCESS, 0x00, ATYP_IPV4, o[0], o[1], o[2], o[3], p[0], p[1]]
+            [
+                SOCKS_VERSION,
+                REP_SUCCESS,
+                0x00,
+                ATYP_IPV4,
+                o[0],
+                o[1],
+                o[2],
+                o[3],
+                p[0],
+                p[1],
+            ]
         }
-        _ => [SOCKS_VERSION, REP_SUCCESS, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0],
+        _ => [
+            SOCKS_VERSION,
+            REP_SUCCESS,
+            0x00,
+            ATYP_IPV4,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
     };
     stream.write_all(&reply).await?;
     stream.flush().await?;
@@ -289,7 +461,9 @@ pub async fn handle_socks5_stream(
         &mut remote_stream,
         UPSTREAM_BUF_SIZE,
         DOWNSTREAM_BUF_SIZE,
-    ).await {
+    )
+    .await
+    {
         Ok((bytes_up, bytes_down)) => {
             metrics.add_bytes_up(bytes_up);
             metrics.add_bytes_down(bytes_down);
@@ -299,7 +473,8 @@ pub async fn handle_socks5_stream(
             Ok(())
         }
         Err(e) => {
-            if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected {
+            if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
+            {
                 metrics.inc_errors();
             }
             Err(e)
@@ -346,7 +521,10 @@ mod tests {
         assert_eq!(ipv4_target.host_and_port(), ("127.0.0.1".to_string(), 8080));
 
         let domain_target = Socks5Target::Domain("example.com".to_string(), 443);
-        assert_eq!(domain_target.host_and_port(), ("example.com".to_string(), 443));
+        assert_eq!(
+            domain_target.host_and_port(),
+            ("example.com".to_string(), 443)
+        );
     }
 
     #[tokio::test]
@@ -378,7 +556,10 @@ mod tests {
     async fn test_parse_connect_request_ipv4() {
         let (mut client, mut server) = tokio::io::duplex(64);
         tokio::spawn(async move {
-            client.write_all(&[0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90]).await.unwrap();
+            client
+                .write_all(&[0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90])
+                .await
+                .unwrap();
         });
         let target = parse_connect_request(&mut server).await.unwrap();
         assert_eq!(target.host_and_port(), ("127.0.0.1".to_string(), 8080));
@@ -402,7 +583,10 @@ mod tests {
     async fn test_parse_connect_request_unsupported_command() {
         let (mut client, mut server) = tokio::io::duplex(64);
         tokio::spawn(async move {
-            client.write_all(&[0x05, 0x02, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90]).await.unwrap();
+            client
+                .write_all(&[0x05, 0x02, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90])
+                .await
+                .unwrap();
             let mut resp = [0u8; 10];
             client.read_exact(&mut resp).await.unwrap();
             assert_eq!(resp[1], 0x07);
@@ -415,7 +599,10 @@ mod tests {
     async fn test_parse_connect_request_unsupported_atyp() {
         let (mut client, mut server) = tokio::io::duplex(64);
         tokio::spawn(async move {
-            client.write_all(&[0x05, 0x01, 0x00, 0x09, 1, 2, 3, 4]).await.unwrap();
+            client
+                .write_all(&[0x05, 0x01, 0x00, 0x09, 1, 2, 3, 4])
+                .await
+                .unwrap();
             let mut resp = [0u8; 10];
             client.read_exact(&mut resp).await.unwrap();
             assert_eq!(resp[1], 0x08);

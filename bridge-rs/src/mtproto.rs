@@ -151,10 +151,7 @@ impl MtprotoCryptoCtx {
 }
 
 /// Parses the 64-byte client Obfs2 handshake header and validates the protocol tag.
-pub fn parse_client_handshake(
-    handshake: &[u8; 64],
-    secret: &[u8; 16],
-) -> Option<ParsedHandshake> {
+pub fn parse_client_handshake(handshake: &[u8; 64], secret: &[u8; 16]) -> Option<ParsedHandshake> {
     if handshake[0] == 0xef {
         return None;
     }
@@ -247,7 +244,9 @@ pub fn generate_relay_init(proto_tag: &[u8; 4], dc_idx: i16) -> [u8; 64] {
     }
 
     let enc_key: [u8; 32] = rnd[SKIP_LEN..SKIP_LEN + PREKEY_LEN].try_into().unwrap();
-    let enc_iv: [u8; 16] = rnd[SKIP_LEN + PREKEY_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN].try_into().unwrap();
+    let enc_iv: [u8; 16] = rnd[SKIP_LEN + PREKEY_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN]
+        .try_into()
+        .unwrap();
 
     let mut tail_plain = [0u8; 8];
     tail_plain[0..4].copy_from_slice(proto_tag);
@@ -301,8 +300,12 @@ pub fn build_crypto_ctx(
     let clt_enc = Aes256Ctr::new(&clt_enc_key.into(), clt_enc_iv.into());
 
     // 3. Upstream Telegram Encryptor (Standard obfuscation without secret hash)
-    let tg_enc_key: [u8; 32] = relay_init[SKIP_LEN..SKIP_LEN + PREKEY_LEN].try_into().unwrap();
-    let tg_enc_iv: [u8; 16] = relay_init[SKIP_LEN + PREKEY_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN].try_into().unwrap();
+    let tg_enc_key: [u8; 32] = relay_init[SKIP_LEN..SKIP_LEN + PREKEY_LEN]
+        .try_into()
+        .unwrap();
+    let tg_enc_iv: [u8; 16] = relay_init[SKIP_LEN + PREKEY_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN]
+        .try_into()
+        .unwrap();
 
     let mut tg_enc = Aes256Ctr::new(&tg_enc_key.into(), &tg_enc_iv.into());
     // Fast-forward upstream encryptor past the initial 64-byte handshake sent to DC
@@ -310,7 +313,11 @@ pub fn build_crypto_ctx(
 
     // 4. Upstream Telegram Decryptor
     let mut relay_dec_prekey_iv = [0u8; 48];
-    for (i, &b) in relay_init[SKIP_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN].iter().rev().enumerate() {
+    for (i, &b) in relay_init[SKIP_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN]
+        .iter()
+        .rev()
+        .enumerate()
+    {
         relay_dec_prekey_iv[i] = b;
     }
     let tg_dec_key: [u8; 32] = relay_dec_prekey_iv[0..32].try_into().unwrap();
@@ -506,7 +513,11 @@ pub struct RawWebSocket<S = TcpStream> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> RawWebSocket<S> {
     /// Establishes an RFC 6455 WebSocket connection on the given TCP stream.
-    pub async fn connect(stream: TcpStream, host: &str, path: &str) -> io::Result<RawWebSocket<TcpStream>> {
+    pub async fn connect(
+        stream: TcpStream,
+        host: &str,
+        path: &str,
+    ) -> io::Result<RawWebSocket<TcpStream>> {
         RawWebSocket::handshake(stream, host, path).await
     }
 
@@ -528,9 +539,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RawWebSocket<S> {
         let mut status_ok = false;
 
         while total_read < header_buf.len() {
-            let n = stream.read(&mut header_buf[total_read..total_read + 1]).await?;
+            let n = stream
+                .read(&mut header_buf[total_read..total_read + 1])
+                .await?;
             if n == 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "WebSocket handshake EOF"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "WebSocket handshake EOF",
+                ));
             }
             total_read += 1;
             if total_read >= 4 && &header_buf[total_read - 4..total_read] == b"\r\n\r\n" {
@@ -679,6 +695,163 @@ impl<S: AsyncRead + AsyncWrite + Unpin> RawWebSocket<S> {
             }
         }
     }
+
+    fn into_split(
+        self,
+    ) -> (
+        WsReader<tokio::io::ReadHalf<S>>,
+        WsWriter<tokio::io::WriteHalf<S>>,
+    ) {
+        let (read, write) = tokio::io::split(self.stream);
+        (
+            WsReader {
+                inner: read,
+                read_buf: self.read_buf,
+                fragment: Vec::new(),
+            },
+            WsWriter { inner: write },
+        )
+    }
+}
+
+#[derive(Debug)]
+enum WsInbound {
+    Data(Vec<u8>),
+    Ping(Vec<u8>),
+}
+
+struct WsReader<R> {
+    inner: R,
+    read_buf: BytesMut,
+    fragment: Vec<u8>,
+}
+
+struct WsWriter<W> {
+    inner: W,
+}
+
+impl<R: AsyncRead + Unpin> WsReader<R> {
+    async fn read_more(&mut self) -> io::Result<bool> {
+        let mut buf = [0u8; 8192];
+        let n = self.inner.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(false);
+        }
+        self.read_buf.extend_from_slice(&buf[..n]);
+        Ok(true)
+    }
+
+    /// Next data message. Fragmented frames are joined. Pings are returned separately
+    /// so the caller can answer them on the write half without blocking this read.
+    async fn next_inbound(&mut self) -> io::Result<Option<WsInbound>> {
+        loop {
+            while self.read_buf.len() < 2 {
+                if !self.read_more().await? {
+                    return Ok(None);
+                }
+            }
+            let b0 = self.read_buf[0];
+            let b1 = self.read_buf[1];
+            let fin = b0 & 0x80 != 0;
+            let opcode = b0 & 0x0F;
+            let is_masked = (b1 & 0x80) != 0;
+            let mut payload_len = (b1 & 0x7F) as usize;
+            let mut hdr_size = 2;
+
+            if payload_len == 126 {
+                hdr_size += 2;
+                while self.read_buf.len() < hdr_size {
+                    if !self.read_more().await? {
+                        return Ok(None);
+                    }
+                }
+                payload_len = u16::from_be_bytes([self.read_buf[2], self.read_buf[3]]) as usize;
+            } else if payload_len == 127 {
+                hdr_size += 8;
+                while self.read_buf.len() < hdr_size {
+                    if !self.read_more().await? {
+                        return Ok(None);
+                    }
+                }
+                payload_len = u64::from_be_bytes(self.read_buf[2..10].try_into().unwrap()) as usize;
+            }
+            if payload_len > 16 * 1024 * 1024 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "WebSocket frame exceeds 16 MB",
+                ));
+            }
+            let mask_size = if is_masked { 4 } else { 0 };
+            let total = hdr_size + mask_size + payload_len;
+            while self.read_buf.len() < total {
+                if !self.read_more().await? {
+                    return Ok(None);
+                }
+            }
+            let frame = self.read_buf.split_to(total);
+            let mut payload = frame[hdr_size + mask_size..].to_vec();
+            if is_masked {
+                let mask = &frame[hdr_size..hdr_size + 4];
+                for (i, byte) in payload.iter_mut().enumerate() {
+                    *byte ^= mask[i % 4];
+                }
+            }
+            if opcode == 0x8 {
+                return Ok(None);
+            }
+            if opcode == 0x9 {
+                return Ok(Some(WsInbound::Ping(payload)));
+            }
+            if opcode == 0xA {
+                continue;
+            }
+            if opcode == 0x2 || opcode == 0x1 || opcode == 0x0 {
+                self.fragment.extend_from_slice(&payload);
+                if self.fragment.len() > 16 * 1024 * 1024 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "WebSocket message exceeds 16 MB",
+                    ));
+                }
+                if !fin {
+                    continue;
+                }
+                return Ok(Some(WsInbound::Data(std::mem::take(&mut self.fragment))));
+            }
+        }
+    }
+}
+
+impl<W: AsyncWrite + Unpin> WsWriter<W> {
+    async fn write_frame(&mut self, opcode: u8, payload: &[u8]) -> io::Result<()> {
+        let mut mask_key = [0u8; 4];
+        rand::thread_rng().fill_bytes(&mut mask_key);
+        let mut frame_hdr = Vec::with_capacity(14);
+        frame_hdr.push(0x80 | opcode);
+        let len = payload.len();
+        if len < 126 {
+            frame_hdr.push(0x80 | (len as u8));
+        } else if len < 65536 {
+            frame_hdr.push(0x80 | 126);
+            frame_hdr.extend_from_slice(&(len as u16).to_be_bytes());
+        } else {
+            frame_hdr.push(0x80 | 127);
+            frame_hdr.extend_from_slice(&(len as u64).to_be_bytes());
+        }
+        frame_hdr.extend_from_slice(&mask_key);
+        let mut masked = payload.to_vec();
+        for (i, byte) in masked.iter_mut().enumerate() {
+            *byte ^= mask_key[i % 4];
+        }
+        self.inner.write_all(&frame_hdr).await?;
+        self.inner.write_all(&masked).await?;
+        self.inner.flush().await?;
+        Ok(())
+    }
+
+    async fn send_binary(&mut self, payload: &[u8]) -> io::Result<()> {
+        self.write_frame(0x2, payload).await
+    }
 }
 
 /// Connects upstream and executes bidirectional traffic relay between client and Telegram Data Center.
@@ -703,8 +876,12 @@ where
         }
     };
 
-    let codec = ProtoCodec::from_tag(&parsed.proto_tag)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unsupported MTProto protocol tag"))?;
+    let codec = ProtoCodec::from_tag(&parsed.proto_tag).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unsupported MTProto protocol tag",
+        )
+    })?;
 
     let dc_idx: i16 = if parsed.is_media {
         -(parsed.dc_id as i16)
@@ -732,7 +909,8 @@ where
         }
     }
 
-    let target_addr = upstream_override.unwrap_or_else(|| get_dc_address(parsed.dc_id, parsed.is_test_dc));
+    let target_addr =
+        upstream_override.unwrap_or_else(|| get_dc_address(parsed.dc_id, parsed.is_test_dc));
 
     // Attempt direct TCP upstream relay first
     let mut upstream = match TcpStream::connect(target_addr).await {
@@ -831,9 +1009,8 @@ fn base64_encode(data: &[u8]) -> String {
     let mut out = String::new();
     let mut index = 0;
     while index + 3 <= data.len() {
-        let n = ((data[index] as u32) << 16)
-            | ((data[index + 1] as u32) << 8)
-            | data[index + 2] as u32;
+        let n =
+            ((data[index] as u32) << 16) | ((data[index + 1] as u32) << 8) | data[index + 2] as u32;
         out.push(TABLE[(n >> 18) as usize] as char);
         out.push(TABLE[((n >> 12) & 63) as usize] as char);
         out.push(TABLE[((n >> 6) & 63) as usize] as char);
@@ -863,12 +1040,26 @@ async fn connect_telegram_ws(
     dc_id: usize,
     is_media: bool,
 ) -> Option<RawWebSocket<tokio_native_tls::TlsStream<TcpStream>>> {
-    let domain = get_dc_ws_host(dc_id, is_media);
-    let outbound = crate::dns::connect_to_remote(&domain, 443, false).await?;
-    let builder = native_tls::TlsConnector::builder().build().ok()?;
-    let connector = tokio_native_tls::TlsConnector::from(builder);
-    let tls = connector.connect(domain.as_str(), outbound.stream).await.ok()?;
-    RawWebSocket::handshake(tls, &domain, "/apiws").await.ok()
+    let mut hosts = vec![get_dc_ws_host(dc_id, is_media)];
+    if is_media {
+        hosts.push(get_dc_ws_host(dc_id, false));
+    }
+    let Ok(tls_connector) = native_tls::TlsConnector::builder().build() else {
+        return None;
+    };
+    let connector = tokio_native_tls::TlsConnector::from(tls_connector);
+    for domain in hosts {
+        let Some(outbound) = crate::dns::connect_to_remote(&domain, 443, false).await else {
+            continue;
+        };
+        let Ok(tls) = connector.connect(domain.as_str(), outbound.stream).await else {
+            continue;
+        };
+        if let Ok(ws) = RawWebSocket::handshake(tls, &domain, "/apiws").await {
+            return Some(ws);
+        }
+    }
+    None
 }
 
 async fn relay_via_websocket<S, C>(
@@ -883,61 +1074,49 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let ws = Arc::new(tokio::sync::Mutex::new(ws));
+    let (mut ws_read, mut ws_write) = ws.into_split();
     let (mut client_reader, mut client_writer) = tokio::io::split(client_stream);
     let mut splitter = MsgSplitter::new(codec);
+    let mut buf = [0u8; 16384];
+    let mut cipher_buf = [0u8; 16384];
 
-    let ws_up = Arc::clone(&ws);
-    let m1 = Arc::clone(&metrics);
-    let client_to_upstream = async move {
-        let mut buf = [0u8; 16384];
-        let mut cipher_buf = [0u8; 16384];
-        loop {
-            let n = client_reader.read(&mut buf).await?;
-            if n == 0 {
-                break;
+    loop {
+        tokio::select! {
+            result = client_reader.read(&mut buf) => {
+                let n = result?;
+                if n == 0 {
+                    break;
+                }
+                metrics.add_bytes_up(n as u64);
+                c2u_crypto.decrypt_client_inplace(&mut buf[..n]);
+                cipher_buf[..n].copy_from_slice(&buf[..n]);
+                c2u_crypto.encrypt_tg_inplace(&mut cipher_buf[..n]);
+                let packets = splitter.split(&cipher_buf[..n], &buf[..n]);
+                for pkt in packets {
+                    ws_write.send_binary(&pkt).await?;
+                }
             }
-            m1.add_bytes_up(n as u64);
-            c2u_crypto.decrypt_client_inplace(&mut buf[..n]);
-            cipher_buf[..n].copy_from_slice(&buf[..n]);
-            c2u_crypto.encrypt_tg_inplace(&mut cipher_buf[..n]);
-            let packets = splitter.split(&cipher_buf[..n], &buf[..n]);
-            let mut guard = ws_up.lock().await;
-            for pkt in packets {
-                guard.send_binary(&pkt).await?;
+            result = ws_read.next_inbound() => {
+                match result? {
+                    None => break,
+                    Some(WsInbound::Ping(payload)) => {
+                        ws_write.write_frame(0xA, &payload).await?;
+                    }
+                    Some(WsInbound::Data(mut payload)) => {
+                        if payload.is_empty() {
+                            continue;
+                        }
+                        metrics.add_bytes_down(payload.len() as u64);
+                        u2c_crypto.decrypt_tg_inplace(&mut payload);
+                        u2c_crypto.encrypt_client_inplace(&mut payload);
+                        client_writer.write_all(&payload).await?;
+                        client_writer.flush().await?;
+                    }
+                }
             }
         }
-        Ok::<(), io::Error>(())
-    };
-
-    let m2 = Arc::clone(&metrics);
-    let upstream_to_client = async move {
-        loop {
-            let frame = {
-                let mut guard = ws.lock().await;
-                guard.read_binary().await?
-            };
-            let Some(payload) = frame else {
-                break;
-            };
-            if payload.is_empty() {
-                continue;
-            }
-            let mut payload = payload;
-            m2.add_bytes_down(payload.len() as u64);
-            u2c_crypto.decrypt_tg_inplace(&mut payload);
-            u2c_crypto.encrypt_client_inplace(&mut payload);
-            client_writer.write_all(&payload).await?;
-            client_writer.flush().await?;
-        }
-        let _ = client_writer.shutdown().await;
-        Ok::<(), io::Error>(())
-    };
-
-    tokio::select! {
-        result = client_to_upstream => result?,
-        result = upstream_to_client => result?,
     }
+    let _ = client_writer.shutdown().await;
     Ok(())
 }
 
@@ -945,11 +1124,41 @@ where
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn test_fragmented_websocket_payload_is_reassembled() {
+        let (mut client, server) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            client
+                .write_all(&[0x02, 0x03, b'h', b'e', b'l'])
+                .await
+                .unwrap();
+            client.write_all(&[0x80, 0x02, b'l', b'o']).await.unwrap();
+        });
+        let mut reader = WsReader {
+            inner: server,
+            read_buf: BytesMut::new(),
+            fragment: Vec::new(),
+        };
+        match reader.next_inbound().await.unwrap() {
+            Some(WsInbound::Data(payload)) => assert_eq!(payload, b"hello"),
+            other => panic!("expected one reassembled data message, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_proto_codec_conversions() {
-        assert_eq!(ProtoCodec::from_tag(&PROTO_TAG_ABRIDGED), Some(ProtoCodec::Abridged));
-        assert_eq!(ProtoCodec::from_tag(&PROTO_TAG_INTERMEDIATE), Some(ProtoCodec::Intermediate));
-        assert_eq!(ProtoCodec::from_tag(&PROTO_TAG_SECURE), Some(ProtoCodec::PaddedIntermediate));
+        assert_eq!(
+            ProtoCodec::from_tag(&PROTO_TAG_ABRIDGED),
+            Some(ProtoCodec::Abridged)
+        );
+        assert_eq!(
+            ProtoCodec::from_tag(&PROTO_TAG_INTERMEDIATE),
+            Some(ProtoCodec::Intermediate)
+        );
+        assert_eq!(
+            ProtoCodec::from_tag(&PROTO_TAG_SECURE),
+            Some(ProtoCodec::PaddedIntermediate)
+        );
         assert_eq!(ProtoCodec::from_tag(&[0, 1, 2, 3]), None);
 
         assert_eq!(ProtoCodec::Abridged.to_tag(), PROTO_TAG_ABRIDGED);
@@ -980,4 +1189,3 @@ mod tests {
         assert_ne!(&init[4..8], &[0, 0, 0, 0]);
     }
 }
-

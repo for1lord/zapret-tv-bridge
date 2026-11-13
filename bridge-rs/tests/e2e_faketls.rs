@@ -128,7 +128,10 @@ fn test_faketls_client_hello_tampered() {
     client_hello[last_idx] ^= 0xFF;
 
     let res = verify_client_hello(&client_hello, &secret);
-    assert!(res.is_none(), "Tampered record must fail HMAC authentication");
+    assert!(
+        res.is_none(),
+        "Tampered record must fail HMAC authentication"
+    );
 }
 
 #[test]
@@ -148,7 +151,10 @@ fn test_faketls_server_hello_conformance() {
     assert_eq!(server_hello[0], TLS_RECORD_HANDSHAKE);
 
     // Session ID echoed at offset 44..76
-    assert_eq!(&server_hello[SESSION_ID_OFFSET..SESSION_ID_OFFSET + SESSION_ID_LEN], &session_id);
+    assert_eq!(
+        &server_hello[SESSION_ID_OFFSET..SESSION_ID_OFFSET + SESSION_ID_LEN],
+        &session_id
+    );
 
     // ChangeCipherSpec frame at offset 127..133
     assert_eq!(&server_hello[127..133], &CCS_FRAME);
@@ -157,7 +163,8 @@ fn test_faketls_server_hello_conformance() {
     assert_eq!(server_hello[133], TLS_RECORD_APPDATA);
 
     // Verify HMAC server random binding
-    let server_random = &server_hello[CLIENT_RANDOM_OFFSET..CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN];
+    let server_random =
+        &server_hello[CLIENT_RANDOM_OFFSET..CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN];
     let mut zeroed_resp = server_hello.clone();
     zeroed_resp[CLIENT_RANDOM_OFFSET..CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN].fill(0);
 
@@ -194,14 +201,20 @@ fn test_wrap_tls_records_splitting() {
     let wrapped_small = wrap_tls_records(&small_data);
     assert_eq!(wrapped_small.len(), 5 + 100);
     assert_eq!(&wrapped_small[0..3], &[TLS_RECORD_APPDATA, 0x03, 0x03]);
-    assert_eq!(u16::from_be_bytes([wrapped_small[3], wrapped_small[4]]), 100);
+    assert_eq!(
+        u16::from_be_bytes([wrapped_small[3], wrapped_small[4]]),
+        100
+    );
 
     // Payload exceeding 16384 bytes must be chunked into multiple TLS records
     let large_data = vec![0x22; 20000];
     let wrapped_large = wrap_tls_records(&large_data);
     // Chunk 1: 5 + 16384 = 16389; Chunk 2: 5 + 3616 = 3621. Total: 20010 bytes.
     assert_eq!(wrapped_large.len(), 20000 + 10);
-    assert_eq!(u16::from_be_bytes([wrapped_large[3], wrapped_large[4]]), 16384);
+    assert_eq!(
+        u16::from_be_bytes([wrapped_large[3], wrapped_large[4]]),
+        16384
+    );
 }
 
 #[test]
@@ -233,7 +246,11 @@ fn create_test_client_handshake(
     secret: &[u8; 16],
     proto_tag: &[u8; 4],
     dc_idx: i16,
-) -> ([u8; 64], ctr::Ctr128BE<aes::Aes256>, ctr::Ctr128BE<aes::Aes256>) {
+) -> (
+    [u8; 64],
+    ctr::Ctr128BE<aes::Aes256>,
+    ctr::Ctr128BE<aes::Aes256>,
+) {
     use aes::Aes256;
     use ctr::cipher::{KeyIvInit, StreamCipher};
 
@@ -387,7 +404,11 @@ fn test_msg_splitter_fragmentation_across_chunks() {
         let parts = splitter.split(single_byte, single_byte);
         emitted.extend(parts);
         if i < complete_pkt.len() - 1 {
-            assert!(emitted.is_empty(), "Partial packet must not be emitted at byte {}", i);
+            assert!(
+                emitted.is_empty(),
+                "Partial packet must not be emitted at byte {}",
+                i
+            );
         }
     }
 
@@ -512,12 +533,30 @@ async fn test_e2e_faketls_mock_relay_loop() {
     )
     .await;
 
-    assert!(read_res.is_ok(), "Echo data must be received within timeout");
+    assert!(
+        read_res.is_ok(),
+        "Echo data must be received within timeout"
+    );
     client_dec.apply_keystream(&mut echo_buf);
     assert_eq!(&echo_buf, &mtproto_pkt);
 
     // Step G: Verify metrics accounting
-    assert!(metrics.total_connections.load(std::sync::atomic::Ordering::Relaxed) >= 1);
-    assert!(metrics.bytes_client_to_remote.load(std::sync::atomic::Ordering::Relaxed) > 0);
-    assert!(metrics.bytes_remote_to_client.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    assert!(
+        metrics
+            .total_connections
+            .load(std::sync::atomic::Ordering::Relaxed)
+            >= 1
+    );
+    assert!(
+        metrics
+            .bytes_client_to_remote
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > 0
+    );
+    assert!(
+        metrics
+            .bytes_remote_to_client
+            .load(std::sync::atomic::Ordering::Relaxed)
+            > 0
+    );
 }

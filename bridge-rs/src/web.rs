@@ -250,9 +250,18 @@ pub fn create_web_router(metrics: Arc<ProxyMetrics>, config: WebConfig) -> Route
         .route("/wpad.dat/", get(pac_handler))
         .route("/PROXY.PAC", get(pac_handler))
         .route("/Proxy.Pac", get(pac_handler))
-        .route("/supercell.mobileconfig", get(mobileconfig_supercell_handler))
-        .route("/brawlstars.mobileconfig", get(mobileconfig_supercell_handler))
-        .route("/clashroyale.mobileconfig", get(mobileconfig_supercell_handler))
+        .route(
+            "/supercell.mobileconfig",
+            get(mobileconfig_supercell_handler),
+        )
+        .route(
+            "/brawlstars.mobileconfig",
+            get(mobileconfig_supercell_handler),
+        )
+        .route(
+            "/clashroyale.mobileconfig",
+            get(mobileconfig_supercell_handler),
+        )
         .route("/comss.mobileconfig", get(mobileconfig_supercell_handler))
         .route("/nullsproxy.mobileconfig", get(mobileconfig_nulls_handler))
         .route("/api/stats", get(stats_handler))
@@ -293,7 +302,10 @@ async fn pac_handler(State(state): State<Arc<WebState>>, req: Request) -> Respon
     let cl = script.len().to_string();
     (
         [
-            ("Content-Type", "application/x-ns-proxy-autoconfig; charset=utf-8"),
+            (
+                "Content-Type",
+                "application/x-ns-proxy-autoconfig; charset=utf-8",
+            ),
             ("Cache-Control", "no-cache, no-store, must-revalidate"),
             ("Pragma", "no-cache"),
             ("Expires", "0"),
@@ -317,7 +329,10 @@ async fn mobileconfig_supercell_handler(State(state): State<Arc<WebState>>) -> R
     let cl = content.len().to_string();
     (
         [
-            ("Content-Type", "application/x-apple-aspen-config; charset=utf-8"),
+            (
+                "Content-Type",
+                "application/x-apple-aspen-config; charset=utf-8",
+            ),
             (
                 "Content-Disposition",
                 "attachment; filename=\"Supercell_Gaming_COMSS.mobileconfig\"",
@@ -342,7 +357,10 @@ async fn mobileconfig_nulls_handler(State(state): State<Arc<WebState>>) -> Respo
     let cl = content.len().to_string();
     (
         [
-            ("Content-Type", "application/x-apple-aspen-config; charset=utf-8"),
+            (
+                "Content-Type",
+                "application/x-apple-aspen-config; charset=utf-8",
+            ),
             (
                 "Content-Disposition",
                 "attachment; filename=\"NullsProxy_Gaming.mobileconfig\"",
@@ -419,9 +437,7 @@ pub async fn handle_local_request(
         path
     };
 
-    let mut req_builder = axum::http::Request::builder()
-        .method(method)
-        .uri(clean_uri);
+    let mut req_builder = axum::http::Request::builder().method(method).uri(clean_uri);
 
     for h in headers.iter() {
         if let Ok(name) = axum::http::header::HeaderName::from_bytes(h.name.as_bytes()) {
@@ -438,7 +454,8 @@ pub async fn handle_local_request(
     let req = match req_builder.body(body) {
         Ok(r) => r,
         Err(e) => {
-            let err_resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let err_resp =
+                "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             let _ = client.write_all(err_resp.as_bytes()).await;
             let _ = client.flush().await;
             return Err(io::Error::new(io::ErrorKind::InvalidInput, e));
@@ -507,7 +524,7 @@ fn render_dashboard_html(
     metrics: &MetricsSnapshot,
 ) -> String {
     format!(
-r#"<!DOCTYPE html>
+        r#"<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">

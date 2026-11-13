@@ -35,26 +35,19 @@ pub const SERVER_HELLO_TEMPLATE: [u8; 127] = [
     // Record Header: Handshake (0x16), TLS 1.2 (0x0303), length 122 (0x007a)
     0x16, 0x03, 0x03, 0x00, 0x7a,
     // Handshake Header: ServerHello (0x02), length 118 (0x000076)
-    0x02, 0x00, 0x00, 0x76,
-    // Version: TLS 1.2 (0x0303)
-    0x03, 0x03,
-    // Server Random placeholder: 32 zeros (offset 11..43)
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0x02, 0x00, 0x00, 0x76, // Version: TLS 1.2 (0x0303)
+    0x03, 0x03, // Server Random placeholder: 32 zeros (offset 11..43)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // Session ID Length: 32 (0x20)
-    0x20,
-    // Session ID placeholder: 32 zeros (offset 44..76)
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0x20, // Session ID placeholder: 32 zeros (offset 44..76)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // Cipher Suite: TLS_AES_128_GCM_SHA256 (0x1301), Compression: null (0x00)
-    0x13, 0x01, 0x00,
-    // Extensions Length: 46 (0x002e)
+    0x13, 0x01, 0x00, // Extensions Length: 46 (0x002e)
     0x00, 0x2e,
     // Extension: key_share (0x0033), length 36 (0x0024), group X25519 (0x001d), key_exchange length 32 (0x0020)
     0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20,
     // Ephemeral public key placeholder: 32 zeros (offset 89..121)
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     // Extension: supported_versions (0x002b), length 2 (0x0002), selected TLS 1.3 (0x0304)
     0x00, 0x2b, 0x00, 0x02, 0x03, 0x04,
 ];
@@ -107,8 +100,8 @@ pub fn parse_secret(input: &str) -> Result<([u8; 16], Option<String>), String> {
         let mut key = [0u8; 16];
         hex::decode_to_slice(&clean[2..34], &mut key)
             .map_err(|e| format!("Invalid hex in ee secret: {e}"))?;
-        let domain_bytes = hex::decode(&clean[34..])
-            .map_err(|e| format!("Invalid masking domain hex: {e}"))?;
+        let domain_bytes =
+            hex::decode(&clean[34..]).map_err(|e| format!("Invalid masking domain hex: {e}"))?;
         let domain = String::from_utf8(domain_bytes)
             .map_err(|e| format!("Masking domain is not valid UTF-8: {e}"))?;
         Ok((key, Some(domain)))
@@ -130,7 +123,8 @@ pub fn verify_client_hello(data: &[u8], secret: &[u8; 16]) -> Option<VerifiedCli
     }
 
     let mut client_random = [0u8; 32];
-    client_random.copy_from_slice(&data[CLIENT_RANDOM_OFFSET..CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN]);
+    client_random
+        .copy_from_slice(&data[CLIENT_RANDOM_OFFSET..CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN]);
 
     let mut zeroed = data.to_vec();
     zeroed[CLIENT_RANDOM_OFFSET..CLIENT_RANDOM_OFFSET + CLIENT_RANDOM_LEN].fill(0);
@@ -171,7 +165,11 @@ pub fn verify_client_hello(data: &[u8], secret: &[u8; 16]) -> Option<VerifiedCli
 }
 
 /// Synthesizes a valid TLS ServerHello response matching client random and session parameters.
-pub fn build_server_hello(secret: &[u8; 16], client_random: &[u8; 32], session_id: &[u8; 32]) -> Vec<u8> {
+pub fn build_server_hello(
+    secret: &[u8; 16],
+    client_random: &[u8; 32],
+    session_id: &[u8; 32],
+) -> Vec<u8> {
     let mut sh = SERVER_HELLO_TEMPLATE.to_vec();
     sh[44..76].copy_from_slice(session_id);
 
@@ -273,6 +271,12 @@ impl<S: AsyncRead + Unpin> AsyncRead for FakeTlsStream<S> {
             while self.read_buf.len() >= 5 {
                 let rtype = self.read_buf[0];
                 let rec_len = u16::from_be_bytes([self.read_buf[3], self.read_buf[4]]) as usize;
+                if rec_len > 18432 {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "TLS record exceeds the maximum fragment size",
+                    )));
+                }
                 let total_rec_len = 5 + rec_len;
 
                 if self.read_buf.len() < total_rec_len {
@@ -296,7 +300,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for FakeTlsStream<S> {
                     }
                     let to_copy = std::cmp::min(buf.remaining(), self.decapsulated.len());
                     if to_copy == 0 {
-                        return Poll::Pending;
+                        return Poll::Ready(Ok(()));
                     }
                     buf.put_slice(&self.decapsulated[..to_copy]);
                     self.decapsulated.advance(to_copy);
@@ -429,10 +433,7 @@ pub async fn proxy_to_masking_domain(
 }
 
 /// Runs the Telegram FakeTLS Gateway listener on port 1443 (or configured address).
-pub async fn run_tg_gateway(
-    config: TgGatewayConfig,
-    metrics: Arc<ProxyMetrics>,
-) -> io::Result<()> {
+pub async fn run_tg_gateway(config: TgGatewayConfig, metrics: Arc<ProxyMetrics>) -> io::Result<()> {
     let listener = TcpListener::bind(config.listen_addr).await?;
 
     loop {
@@ -451,7 +452,10 @@ pub async fn run_tg_gateway(
 
         tokio::spawn(async move {
             let _guard = metrics_clone.connection_guard();
-            if let Err(e) = handle_inbound_connection(client_stream, remote_addr, config_clone, metrics_clone).await {
+            if let Err(e) =
+                handle_inbound_connection(client_stream, remote_addr, config_clone, metrics_clone)
+                    .await
+            {
                 eprintln!("[TgGateway] Connection {remote_addr} ended with notice: {e}");
             }
         });
@@ -496,7 +500,11 @@ async fn handle_inbound_connection(
         match verify_client_hello(&client_hello, &config.secret) {
             Some(verified) => {
                 // Cryptographically validated ClientHello: Synthesize ServerHello
-                let server_hello = build_server_hello(&config.secret, &verified.client_random, &verified.session_id);
+                let server_hello = build_server_hello(
+                    &config.secret,
+                    &verified.client_random,
+                    &verified.session_id,
+                );
                 stream.write_all(&server_hello).await?;
                 stream.flush().await?;
 
@@ -588,4 +596,3 @@ mod tests {
         assert_eq!(&wrapped[5..], &payload[..]);
     }
 }
-
