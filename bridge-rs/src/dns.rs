@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 use parking_lot::RwLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::task::JoinSet;
 use tokio::time::timeout;
+
+use crate::access::upstream_allowed;
 
 /// Default time-to-live for cached DNS entries (10 minutes).
 pub const DEFAULT_DNS_TTL: Duration = Duration::from_secs(600);
@@ -151,13 +154,29 @@ pub fn is_valid_candidate_ip(ip: IpAddr) -> bool {
     }
 }
 
-/// Queries a public DNS server directly over TCP (RFC 7766) for IPv4 (A) records.
-/// Bypasses ISP UDP 53 interception and spoofed NXDOMAIN / blackhole responses.
-pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
-    let mut packet = Vec::with_capacity(512);
-    // Header: Transaction ID (0x1234), Flags (0x0100 standard query), QDCOUNT=1, ANCOUNT=0, NSCOUNT=0, ARCOUNT=0
-    packet.extend_from_slice(&[0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+const DNS_QUERY_ID: u16 = 0x1234;
 
+/// One address to try, and whether it may be cached before any payload arrives.
+#[derive(Clone, Copy, Debug)]
+struct Candidate {
+    ip: IpAddr,
+    /// System-resolver answers (ISP GGC) are cached only after downstream bytes.
+    confirm_before_cache: bool,
+}
+
+/// Successful outbound TCP connection.
+pub struct Outbound {
+    pub stream: TcpStream,
+    pub ip: IpAddr,
+    /// When true, the caller caches `ip` only after the remote sends data.
+    pub confirm_cache: bool,
+}
+
+fn build_dns_query(hostname: &str) -> Option<Vec<u8>> {
+    let mut packet = Vec::with_capacity(512);
+    packet.extend_from_slice(&DNS_QUERY_ID.to_be_bytes());
+    // RD=1, one question.
+    packet.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     for part in hostname.split('.') {
         let b = part.as_bytes();
         if b.is_empty() || b.len() > 63 {
@@ -167,9 +186,91 @@ pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Ad
         packet.extend_from_slice(b);
     }
     packet.push(0x00);
-    // QTYPE: 1 (A), QCLASS: 1 (IN)
     packet.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+    Some(packet)
+}
 
+/// Skips a domain name. A compression pointer ends the name on the wire.
+fn skip_dns_name(buf: &[u8], mut idx: usize) -> Option<usize> {
+    let mut hops = 0;
+    loop {
+        if idx >= buf.len() || hops > 32 {
+            return None;
+        }
+        let len = buf[idx];
+        if len == 0 {
+            return idx.checked_add(1);
+        }
+        if len & 0xC0 == 0xC0 {
+            if idx + 1 >= buf.len() {
+                return None;
+            }
+            return idx.checked_add(2);
+        }
+        if len & 0xC0 != 0 || len > 63 {
+            return None;
+        }
+        idx = idx.checked_add(1 + len as usize)?;
+        hops += 1;
+    }
+}
+
+/// Parses A records. The question is walked in the response, and the id must match.
+pub fn parse_dns_a_answers(buf: &[u8], expected_id: u16) -> Option<Vec<Ipv4Addr>> {
+    if buf.len() < 12 {
+        return None;
+    }
+    let id = u16::from_be_bytes([buf[0], buf[1]]);
+    if id != expected_id {
+        return None;
+    }
+    let flags = u16::from_be_bytes([buf[2], buf[3]]);
+    let qr = flags & 0x8000 != 0;
+    let rcode = flags & 0x000F;
+    if !qr || rcode != 0 {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([buf[4], buf[5]]) as usize;
+    let ancount = u16::from_be_bytes([buf[6], buf[7]]) as usize;
+    if ancount == 0 {
+        return None;
+    }
+    let mut idx = 12usize;
+    for _ in 0..qdcount {
+        idx = skip_dns_name(buf, idx)?;
+        idx = idx.checked_add(4)?;
+        if idx > buf.len() {
+            return None;
+        }
+    }
+    let mut ips = Vec::new();
+    for _ in 0..ancount {
+        idx = skip_dns_name(buf, idx)?;
+        if idx + 10 > buf.len() {
+            return None;
+        }
+        let rtype = u16::from_be_bytes([buf[idx], buf[idx + 1]]);
+        let rdlen = u16::from_be_bytes([buf[idx + 8], buf[idx + 9]]) as usize;
+        idx += 10;
+        if idx + rdlen > buf.len() {
+            return None;
+        }
+        if rtype == 1 && rdlen == 4 {
+            ips.push(Ipv4Addr::new(buf[idx], buf[idx + 1], buf[idx + 2], buf[idx + 3]));
+        }
+        idx += rdlen;
+    }
+    if ips.is_empty() {
+        None
+    } else {
+        Some(ips)
+    }
+}
+
+/// Queries a public DNS server directly over TCP (RFC 7766) for IPv4 (A) records.
+/// Avoids ISP UDP 53 interception and spoofed NXDOMAIN / blackhole responses.
+pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
+    let packet = build_dns_query(hostname)?;
     let target = format!("{server_ip}:53");
     let mut stream = timeout(Duration::from_millis(1500), TcpStream::connect(&target)).await.ok()?.ok()?;
 
@@ -189,207 +290,103 @@ pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Ad
 
     let mut buf = vec![0u8; resp_len];
     timeout(Duration::from_millis(2000), stream.read_exact(&mut buf)).await.ok()?.ok()?;
-
-    let ancount = u16::from_be_bytes([buf[6], buf[7]]);
-    if ancount == 0 {
-        return None;
-    }
-
-    let mut idx = packet.len();
-    let mut ips = Vec::new();
-
-    for _ in 0..ancount {
-        if idx >= resp_len {
-            break;
-        }
-        if (buf[idx] & 0xC0) == 0xC0 {
-            idx += 2;
-        } else {
-            while idx < resp_len && buf[idx] != 0 {
-                idx += (buf[idx] as usize) + 1;
-            }
-            idx += 1;
-        }
-
-        if idx + 10 > resp_len {
-            break;
-        }
-
-        let rtype = u16::from_be_bytes([buf[idx], buf[idx + 1]]);
-        let rdlen = u16::from_be_bytes([buf[idx + 8], buf[idx + 9]]) as usize;
-        idx += 10;
-
-        if rtype == 1 && rdlen == 4 && idx + 4 <= resp_len {
-            let ipv4 = Ipv4Addr::new(buf[idx], buf[idx + 1], buf[idx + 2], buf[idx + 3]);
-            ips.push(ipv4);
-        }
-        idx += rdlen;
-    }
-
-    if ips.is_empty() {
-        None
-    } else {
-        Some(ips)
-    }
+    parse_dns_a_answers(&buf, DNS_QUERY_ID)
 }
 
 /// Queries a public DNS server directly over UDP for IPv4 (A) records.
 pub async fn query_dns_udp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
-    let mut packet = Vec::with_capacity(512);
-    // Header: Transaction ID (0x1234), Flags (0x0100 standard query), QDCOUNT=1, ANCOUNT=0, NSCOUNT=0, ARCOUNT=0
-    packet.extend_from_slice(&[0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-
-    for part in hostname.split('.') {
-        let b = part.as_bytes();
-        if b.is_empty() || b.len() > 63 {
-            return None;
-        }
-        packet.push(b.len() as u8);
-        packet.extend_from_slice(b);
-    }
-    packet.push(0x00);
-    // QTYPE: 1 (A), QCLASS: 1 (IN)
-    packet.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
-
+    let packet = build_dns_query(hostname)?;
     let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()?;
     let target = format!("{server_ip}:53");
     socket.send_to(&packet, &target).await.ok()?;
 
     let mut buf = [0u8; 1024];
     let (len, _) = timeout(Duration::from_millis(1500), socket.recv_from(&mut buf)).await.ok()?.ok()?;
-    if len < packet.len() || len < 12 {
+    if len < 12 {
         return None;
     }
+    parse_dns_a_answers(&buf[..len], DNS_QUERY_ID)
+}
 
-    let ancount = u16::from_be_bytes([buf[6], buf[7]]);
-    if ancount == 0 {
-        return None;
+fn push_candidate(out: &mut Vec<Candidate>, ip: IpAddr, confirm_before_cache: bool, allow_local: bool) {
+    if !upstream_allowed(ip, allow_local) || out.iter().any(|c| c.ip == ip) {
+        return;
     }
+    out.push(Candidate {
+        ip,
+        confirm_before_cache,
+    });
+}
 
-    let mut idx = packet.len();
-    let mut ips = Vec::new();
-
-    for _ in 0..ancount {
-        if idx >= len {
-            break;
+async fn lookup_system(hostname: &str, allow_local: bool, out: &mut Vec<Candidate>) {
+    let addr_str = format!("{hostname}:443");
+    if let Ok(Ok(addrs)) = timeout(Duration::from_millis(1500), tokio::net::lookup_host(addr_str)).await {
+        for sa in addrs {
+            // ISP answers stay uncached until the connection actually carries data.
+            push_candidate(out, sa.ip(), true, allow_local);
         }
-        if (buf[idx] & 0xC0) == 0xC0 {
-            idx += 2;
-        } else {
-            while idx < len && buf[idx] != 0 {
-                idx += (buf[idx] as usize) + 1;
+    }
+}
+
+async fn lookup_public(hostname: &str, allow_local: bool, out: &mut Vec<Candidate>) {
+    for pub_dns in &["1.1.1.1", "8.8.8.8"] {
+        if let Some(ips) = query_dns_tcp(pub_dns, hostname).await {
+            for ip4 in ips {
+                push_candidate(out, IpAddr::V4(ip4), false, allow_local);
             }
-            idx += 1;
+            if out.iter().any(|c| !c.confirm_before_cache) {
+                return;
+            }
         }
-
-        if idx + 10 > len {
-            break;
-        }
-
-        let rtype = u16::from_be_bytes([buf[idx], buf[idx + 1]]);
-        let rdlen = u16::from_be_bytes([buf[idx + 8], buf[idx + 9]]) as usize;
-        idx += 10;
-
-        if rtype == 1 && rdlen == 4 && idx + 4 <= len {
-            let ipv4 = Ipv4Addr::new(buf[idx], buf[idx + 1], buf[idx + 2], buf[idx + 3]);
-            ips.push(ipv4);
-        }
-        idx += rdlen;
     }
-
-    if ips.is_empty() {
-        None
-    } else {
-        Some(ips)
+    for pub_dns in &["1.1.1.1", "8.8.8.8"] {
+        if let Some(ips) = query_dns_udp(pub_dns, hostname).await {
+            for ip4 in ips {
+                push_candidate(out, IpAddr::V4(ip4), false, allow_local);
+            }
+            if out.iter().any(|c| !c.confirm_before_cache) {
+                return;
+            }
+        }
     }
 }
 
 /// Resolves candidate IP addresses for a given hostname.
 ///
-/// Priority:
-/// 1. In-memory DNS cache
-/// 2. Direct public DNS over TCP (1.1.1.1, 8.8.8.8) to bypass ISP UDP 53 interception
-/// 3. Direct public DNS over UDP
-/// 4. System OS resolver fallback
+/// Public resolvers over TCP are preferred for the long-lived cache.
+/// The system resolver is included so a nearby CDN node can still win the race,
+/// but those addresses are not stored until payload bytes arrive.
 pub async fn resolve_candidate_ips(hostname: &str) -> Vec<IpAddr> {
+    resolve_candidates(hostname, true)
+        .await
+        .into_iter()
+        .map(|c| c.ip)
+        .collect()
+}
+
+async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate> {
     if let Ok(ip) = hostname.parse::<IpAddr>() {
-        return if is_valid_candidate_ip(ip) { vec![ip] } else { Vec::new() };
+        let mut out = Vec::new();
+        push_candidate(&mut out, ip, false, allow_local);
+        return out;
     }
 
     let mut candidates = Vec::new();
-
-    // 1. Check in-memory DNS cache first for instant connection
     if let Some(cached_ip) = GLOBAL_DNS_CACHE.get(hostname) {
-        if is_valid_candidate_ip(cached_ip) {
-            candidates.push(cached_ip);
-        }
+        push_candidate(&mut candidates, cached_ip, false, allow_local);
     }
 
-    // Prioritize system DNS for YouTube / GoogleVideo CDN to preserve local ISP GGC cache nodes
-    let is_google_streaming = hostname.contains("googlevideo")
+    let streaming = hostname.contains("googlevideo")
         || hostname.contains("youtube")
         || hostname.contains("ytimg")
         || hostname.contains("ggpht");
-
-    if is_google_streaming {
-        let addr_str = format!("{hostname}:443");
-        if let Ok(Ok(addrs)) = timeout(Duration::from_millis(1500), tokio::net::lookup_host(addr_str)).await {
-            for sa in addrs {
-                let ip = sa.ip();
-                if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
-                    candidates.push(ip);
-                }
-            }
-        }
+    if streaming {
+        lookup_system(hostname, allow_local, &mut candidates).await;
     }
-
-    // 2. Query direct public DNS resolvers over TCP (1.1.1.1, 8.8.8.8) for filtered / unpoisoned CDNs
-    if candidates.is_empty() {
-        for pub_dns in &["1.1.1.1", "8.8.8.8"] {
-            if let Some(ips) = query_dns_tcp(pub_dns, hostname).await {
-                for ip4 in ips {
-                    let ip = IpAddr::V4(ip4);
-                    if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
-                        candidates.push(ip);
-                    }
-                }
-                if !candidates.is_empty() {
-                    break;
-                }
-            }
-        }
+    lookup_public(hostname, allow_local, &mut candidates).await;
+    if !candidates.iter().any(|c| !c.confirm_before_cache) {
+        lookup_system(hostname, allow_local, &mut candidates).await;
     }
-
-    // 3. Fallback: Query UDP if TCP did not return answers
-    if candidates.is_empty() {
-        for pub_dns in &["1.1.1.1", "8.8.8.8"] {
-            if let Some(ips) = query_dns_udp(pub_dns, hostname).await {
-                for ip4 in ips {
-                    let ip = IpAddr::V4(ip4);
-                    if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
-                        candidates.push(ip);
-                    }
-                }
-                if !candidates.is_empty() {
-                    break;
-                }
-            }
-        }
-    }
-
-    // 4. Fallback to system resolver via lookup_host for LAN/intranet or other domains
-    if candidates.is_empty() {
-        let addr_str = format!("{hostname}:443");
-        if let Ok(Ok(addrs)) = timeout(Duration::from_millis(2500), tokio::net::lookup_host(addr_str)).await {
-            for sa in addrs {
-                let ip = sa.ip();
-                if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
-                    candidates.push(ip);
-                }
-            }
-        }
-    }
-
     candidates
 }
 
@@ -403,53 +400,73 @@ pub fn tune_socket(stream: &TcpStream) {
     let _ = sock.set_send_buffer_size(SOCKET_BUF_SIZE);
 }
 
-/// Connects to a remote host with fast failover across candidate IPs and socket tuning.
-///
-/// Upon successful connection, caches the working IP address in `GLOBAL_DNS_CACHE`
-/// and configures `TCP_NODELAY` and 128 KB socket buffers via `socket2`.
-pub async fn connect_to_remote(hostname: &str, port: u16) -> Option<(TcpStream, IpAddr)> {
-    // If hostname is already an IP address, connect directly with fast timeout
-    if let Ok(ip) = hostname.parse::<IpAddr>() {
-        let target_addr = SocketAddr::new(ip, port);
-        if let Ok(Ok(stream)) = timeout(Duration::from_millis(3500), TcpStream::connect(target_addr)).await {
+async fn connect_one(ip: IpAddr, port: u16) -> Option<TcpStream> {
+    let target = SocketAddr::new(ip, port);
+    match timeout(Duration::from_millis(2500), TcpStream::connect(target)).await {
+        Ok(Ok(stream)) => {
             tune_socket(&stream);
-            return Some((stream, ip));
+            Some(stream)
         }
+        _ => None,
+    }
+}
+
+/// Connects to a remote host across candidate IPs at once.
+///
+/// `allow_local` permits a loopback upstream. Private and link-local addresses
+/// stay closed. Public-resolver answers are cached immediately. System-resolver
+/// answers set `confirm_cache` so the caller stores them only after data flows.
+pub async fn connect_to_remote(hostname: &str, port: u16, allow_local: bool) -> Option<Outbound> {
+    if let Ok(ip) = hostname.parse::<IpAddr>() {
+        if !upstream_allowed(ip, allow_local) {
+            return None;
+        }
+        let stream = connect_one(ip, port).await?;
+        return Some(Outbound {
+            stream,
+            ip,
+            confirm_cache: false,
+        });
+    }
+
+    let mut candidates = resolve_candidates(hostname, allow_local).await;
+    if candidates.is_empty() {
         return None;
     }
+    candidates.truncate(6);
 
-    let candidates = resolve_candidate_ips(hostname).await;
-    let connect_timeout = Duration::from_millis(3000);
+    let mut pending = JoinSet::new();
+    for candidate in candidates {
+        pending.spawn(async move {
+            let stream = connect_one(candidate.ip, port).await?;
+            Some((stream, candidate))
+        });
+    }
 
-    for tip in &candidates {
-        let target_addr = SocketAddr::new(*tip, port);
-        match timeout(connect_timeout, TcpStream::connect(target_addr)).await {
-            Ok(Ok(stream)) => {
-                tune_socket(&stream);
-                GLOBAL_DNS_CACHE.insert(hostname, *tip);
-                return Some((stream, *tip));
+    while let Some(joined) = pending.join_next().await {
+        if let Ok(Some((stream, candidate))) = joined {
+            pending.abort_all();
+            if !candidate.confirm_before_cache {
+                GLOBAL_DNS_CACHE.insert(hostname, candidate.ip);
+            } else {
+                GLOBAL_DNS_CACHE.remove(hostname);
             }
-            _ => continue,
+            return Some(Outbound {
+                stream,
+                ip: candidate.ip,
+                confirm_cache: candidate.confirm_before_cache,
+            });
         }
     }
 
-    // Evict stale or unreachable IP from cache
     GLOBAL_DNS_CACHE.remove(hostname);
-
-    // Direct fallback lookup by host:port
-    let addr_str = format!("{hostname}:{port}");
-    if let Ok(Ok(stream)) = timeout(Duration::from_millis(4000), TcpStream::connect(&addr_str)).await {
-        tune_socket(&stream);
-        if let Ok(peer) = stream.peer_addr() {
-            let ip = peer.ip();
-            if is_valid_candidate_ip(ip) {
-                GLOBAL_DNS_CACHE.insert(hostname, ip);
-            }
-            return Some((stream, ip));
-        }
-    }
-
     None
+}
+
+pub fn remember_confirmed_ip(hostname: &str, ip: IpAddr) {
+    if upstream_allowed(ip, false) {
+        GLOBAL_DNS_CACHE.insert_with_ttl(hostname, ip, Duration::from_secs(45));
+    }
 }
 
 #[cfg(test)]

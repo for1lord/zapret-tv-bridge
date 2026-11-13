@@ -321,10 +321,11 @@ pub fn parse_strategy_args(bat_path: &Path, bin_dir: &Path, lists_dir: &Path) ->
     let bin_str = format!("{}\\", bin_dir.to_string_lossy().trim_end_matches('\\'));
     let lists_str = format!("{}\\", lists_dir.to_string_lossy().trim_end_matches('\\'));
 
+    let (game_tcp, game_udp) = game_filter_ports(lists_dir);
     let mut replaced = content
-        .replace("%GameFilterTCP%", "12")
-        .replace("%GameFilterUDP%", "12")
-        .replace("%GameFilter%", "12")
+        .replace("%GameFilterTCP%", &game_tcp)
+        .replace("%GameFilterUDP%", &game_udp)
+        .replace("%GameFilter%", &game_tcp)
         .replace("%BIN%", &bin_str)
         .replace("%LISTS%", &lists_str);
 
@@ -352,17 +353,67 @@ pub fn parse_strategy_args(bat_path: &Path, bin_dir: &Path, lists_dir: &Path) ->
     }
 
     let full_cmd = winws_lines.join(" ").replace('^', " ");
-    if let Some(pos) = full_cmd.to_lowercase().find("winws.exe") {
-        let after = &full_cmd[pos + 9..].trim();
+    if let Some(pos) = find_ignore_ascii_case(&full_cmd, "winws.exe") {
+        let after = full_cmd[pos + "winws.exe".len()..].trim();
         let cleaned_after = after.trim_start_matches(|c| c == '"' || c == '\'').trim();
-        // Collapse spaces
-        let collapsed = cleaned_after.split_whitespace().collect::<Vec<_>>().join(" ");
+        let collapsed = collapse_ws_preserve_quotes(cleaned_after);
         if !collapsed.is_empty() {
             return Some(collapsed);
         }
     }
 
     None
+}
+
+/// Wide game ports, unless `lists/game_filter.disabled` is present.
+/// Port 12 is only the upstream placeholder that keeps a disabled filter syntactically valid.
+fn game_filter_ports(lists_dir: &Path) -> (String, String) {
+    if lists_dir.join("game_filter.disabled").exists() {
+        ("12".to_string(), "12".to_string())
+    } else {
+        ("1024-65535".to_string(), "1024-65535".to_string())
+    }
+}
+
+fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn collapse_ws_preserve_quotes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_quote: Option<char> = None;
+    let mut pending_space = false;
+    for ch in input.chars() {
+        if let Some(q) = in_quote {
+            out.push(ch);
+            if ch == q {
+                in_quote = None;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            in_quote = Some(ch);
+            out.push(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            pending_space = !out.is_empty();
+            continue;
+        }
+        if pending_space {
+            out.push(' ');
+            pending_space = false;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Main Interactive Console Manager for Zapret & TV Bridge.
@@ -410,7 +461,7 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
 
         println!();
         println!("  ==================================================");
-        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.13 (Rust Core)");
+        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.14 (Rust Core)");
         println!("  ==================================================");
         println!("  Служба Zapret:         {}", zapret_label);
         println!("  Шлюз для ТВ/Мобильных: {}", bridge_label);

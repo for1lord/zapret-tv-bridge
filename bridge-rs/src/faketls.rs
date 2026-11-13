@@ -288,9 +288,16 @@ impl<S: AsyncRead + Unpin> AsyncRead for FakeTlsStream<S> {
                     // Ignore ChangeCipherSpec frames
                     continue;
                 } else if rtype == TLS_RECORD_APPDATA {
-                    // Extract ApplicationData payload
-                    self.decapsulated.extend_from_slice(&rec[5..]);
+                    if rec.len() > 5 {
+                        self.decapsulated.extend_from_slice(&rec[5..]);
+                    }
+                    if self.decapsulated.is_empty() {
+                        continue;
+                    }
                     let to_copy = std::cmp::min(buf.remaining(), self.decapsulated.len());
+                    if to_copy == 0 {
+                        return Poll::Pending;
+                    }
                     buf.put_slice(&self.decapsulated[..to_copy]);
                     self.decapsulated.advance(to_copy);
                     return Poll::Ready(Ok(()));
@@ -394,7 +401,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for FakeTlsStream<S> {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let _ = self.as_mut().poll_flush(cx);
+        match self.as_mut().poll_flush(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Ready(Ok(())) => {}
+        }
         let this = self.get_mut();
         Pin::new(&mut this.inner).poll_shutdown(cx)
     }

@@ -131,9 +131,9 @@ fn test_e2e_cidr_ip_classification() {
     // Telegram Media (91.108.56.0/22)
     assert_eq!(router.should_route_ip(IpAddr::V4(Ipv4Addr::new(91, 108, 56, 1))), (true, "target_routed"));
 
-    // Priority 3: Standalone database IPv4 literal
-    assert_eq!(router.should_route_ip(IpAddr::V4(Ipv4Addr::new(5, 45, 70, 48))), (true, "database_routed"));
-    assert_eq!(router.should_route("5.45.70.48"), (true, "database_routed"));
+    // This address is now an explicit ipset-all target, so it wins before the database tier.
+    assert_eq!(router.should_route_ip(IpAddr::V4(Ipv4Addr::new(5, 45, 70, 48))), (true, "target_routed"));
+    assert_eq!(router.should_route("5.45.70.48"), (true, "target_routed"));
 
     // Priority 4: Default unlisted IP -> direct ("default_direct")
     assert_eq!(router.should_route_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))), (false, "default_direct"));
@@ -212,11 +212,15 @@ fn test_e2e_dynamic_auto_add_domain() {
     let router = SmartRouter::new(&test_dir);
     assert_eq!(router.should_route("cool"), (true, "database_routed"));
 
-    // Sub-query for dynamically registered domain
-    assert_eq!(router.should_route("cool"), (true, "target_routed"));
-
     let contents = fs::read_to_string(&user_list_path).unwrap();
-    assert!(contents.contains("cool"), "User list file must contain newly added domain");
+    assert!(
+        !contents.contains("cool"),
+        "A database hit must not be copied into the user list"
+    );
+    router.observe_domain("brand-new-stream.example", "target_routed");
+    assert_eq!(router.should_route("brand-new-stream.example"), (true, "target_routed"));
+    let contents = fs::read_to_string(&user_list_path).unwrap();
+    assert!(contents.contains("brand-new-stream.example"));
 
     let _ = fs::remove_dir_all(&test_dir);
 }

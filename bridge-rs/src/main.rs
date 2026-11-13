@@ -204,8 +204,9 @@ impl Drop for PidCleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.pid_file);
         let _ = std::fs::remove_file(&self.ip_file);
+        let _ = self.tg_port;
         let _ = std::fs::remove_file(&self.tg_pid_file);
-        ensure_tg_port_free(self.tg_port, &self.base_dir);
+        stop_recorded_tg_pid(&self.base_dir);
     }
 }
 
@@ -254,34 +255,69 @@ fn find_python_binary() -> Option<PathBuf> {
 }
 
 /// Ensures Telegram proxy port (default: 1443) is free from previous/stale instances.
-fn ensure_tg_port_free(port: u16, base_dir: &std::path::Path) {
+fn stop_recorded_tg_pid(base_dir: &std::path::Path) {
     let tg_pid_file = base_dir.join("tg_proxy.pid");
-    if tg_pid_file.exists() {
-        if let Ok(content) = std::fs::read_to_string(&tg_pid_file) {
-            if let Ok(pid) = content.trim().parse::<u32>() {
-                #[cfg(windows)]
-                {
-                    let _ = std::process::Command::new("taskkill")
-                        .args(&["/F", "/PID", &pid.to_string()])
-                        .output();
-                }
+    if let Ok(content) = std::fs::read_to_string(&tg_pid_file) {
+        if let Ok(pid) = content.trim().parse::<u32>() {
+            if pid > 0 && pid != std::process::id() {
+                kill_pid(pid);
             }
         }
-        let _ = std::fs::remove_file(&tg_pid_file);
     }
+    let _ = std::fs::remove_file(&tg_pid_file);
+}
 
+fn spawn_tgws_exe(exe: &std::path::Path, port: u16, secret: &str, base: &std::path::Path) -> std::io::Result<std::process::Child> {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(["--host", "0.0.0.0", "--port", &port.to_string(), "--secret", secret]);
+    for dc in TG_DC_ENDPOINTS {
+        cmd.arg("--dc-ip").arg(dc);
+    }
+    let log = base.join("tg_proxy.log");
+    if let Some(path) = log.to_str() {
+        cmd.args(["--log-file", path]);
+    }
+    cmd.current_dir(base);
     #[cfg(windows)]
     {
-        let ps_cmd = format!(
-            "$pids = (Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue).OwningProcess; \
-             foreach ($p in $pids) {{ Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }}",
-            port
-        );
-        let _ = std::process::Command::new("powershell")
-            .args(&["-NoProfile", "-Command", &ps_cmd])
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.spawn()
+}
+
+fn kill_pid(pid: u32) {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
             .output();
     }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+    }
 }
+
+fn telegram_link_secret(raw: &str) -> String {
+    let s = raw.trim();
+    let prefix = s.get(..2).unwrap_or("").to_ascii_lowercase();
+    if prefix == "dd" || prefix == "ee" {
+        s.to_string()
+    } else if s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("dd{s}")
+    } else {
+        s.to_string()
+    }
+}
+
+const TG_DC_ENDPOINTS: &[&str] = &[
+    "1:149.154.175.50",
+    "2:149.154.167.51",
+    "3:149.154.175.100",
+    "4:149.154.167.91",
+    "5:149.154.171.5",
+];
 
 async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn std::error::Error>> {
     // Automatically ensure Zapret service is started if installed
@@ -295,6 +331,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     }
 
     let router = Arc::new(router::SmartRouter::new(&base_dir));
+    router::arm_service_reload();
     let metrics = Arc::new(metrics::ProxyMetrics::new());
 
     let http_addr: SocketAddr = std::env::var("BRIDGE_PROXY_ADDR")
@@ -361,19 +398,15 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         base_dir: base_dir.clone(),
     };
 
-    let clean_tg_secret_str = tg_secret_str.strip_prefix("dd").unwrap_or(&tg_secret_str);
-    let clean_tg_secret_str = if clean_tg_secret_str.len() >= 32 {
-        clean_tg_secret_str[..32].to_string()
-    } else {
-        clean_tg_secret_str.to_string()
-    };
+    let tg_process_secret = tg_secret_str.trim().to_string();
+    let tg_link_secret = telegram_link_secret(&tg_process_secret);
 
     let web_config = zapret_tv_bridge_rs::web::WebConfig::new(
         http_addr.port(),
         default_ip.clone(),
         base_dir.clone(),
         tg_port,
-        clean_tg_secret_str.clone(),
+        tg_link_secret,
         start_time,
     );
     let web_router = zapret_tv_bridge_rs::web::create_web_router(Arc::clone(&metrics), web_config);
@@ -421,7 +454,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     let python_bin = find_python_binary();
 
     let mut _tg_handle = if let Some(exe_path) = standalone_tg_exe {
-        ensure_tg_port_free(tg_port, &base_dir);
+        stop_recorded_tg_pid(&base_dir);
 
         let mut cmd = std::process::Command::new(&exe_path);
         cmd.args(&[
@@ -430,12 +463,11 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
             "--port",
             &tg_port.to_string(),
             "--secret",
-            &clean_tg_secret_str,
-            "--dc-ip",
-            "2:149.154.167.220",
-            "--dc-ip",
-            "4:149.154.167.220",
+            &tg_process_secret,
         ]);
+        for dc in TG_DC_ENDPOINTS {
+            cmd.arg("--dc-ip").arg(dc);
+        }
         let tg_log_path = base_dir.join("tg_proxy.log");
         if let Some(s) = tg_log_path.to_str() {
             cmd.args(&["--log-file", s]);
@@ -449,7 +481,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         }
 
         match cmd.spawn() {
-            Ok(mut child) => {
+            Ok(child) => {
                 let c_pid = child.id();
                 let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
                 if !is_daemon {
@@ -459,22 +491,26 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                     );
                 }
                 let pid_file_copy = tg_pid_file.clone();
+                let exe_bg = exe_path.clone();
+                let secret_bg = tg_process_secret.clone();
+                let base_bg = base_dir.clone();
+                let port_bg = tg_port;
                 tokio::spawn(async move {
+                    let mut child = child;
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                         match child.try_wait() {
-                            Ok(Some(status)) => {
-                                eprintln!("[TgWsProxy] Telegram proxy process exited with status: {:?}", status);
-                                let _ = std::fs::remove_file(&pid_file_copy);
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    "tgwsproxy process exited",
-                                ));
-                            }
                             Ok(None) => {}
-                            Err(e) => {
-                                let _ = std::fs::remove_file(&pid_file_copy);
-                                return Err(e);
+                            other => {
+                                eprintln!("[TgWsProxy] process stopped ({other:?}). Restarting in 3s; HTTP proxy stays up");
+                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                match spawn_tgws_exe(&exe_bg, port_bg, &secret_bg, &base_bg) {
+                                    Ok(next) => {
+                                        let _ = std::fs::write(&pid_file_copy, next.id().to_string());
+                                        child = next;
+                                    }
+                                    Err(e) => eprintln!("[TgWsProxy] restart failed: {e}"),
+                                }
                             }
                         }
                     }
@@ -499,7 +535,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
             }
         }
     } else if let (Some(tg_dir), Some(py_bin)) = (tg_proxy_dir, python_bin) {
-        ensure_tg_port_free(tg_port, &base_dir);
+        stop_recorded_tg_pid(&base_dir);
 
         let mut cmd = std::process::Command::new(&py_bin);
         cmd.args(&[
@@ -510,12 +546,11 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
             "--port",
             &tg_port.to_string(),
             "--secret",
-            &clean_tg_secret_str,
-            "--dc-ip",
-            "2:149.154.167.220",
-            "--dc-ip",
-            "4:149.154.167.220",
+            &tg_process_secret,
         ]);
+        for dc in TG_DC_ENDPOINTS {
+            cmd.arg("--dc-ip").arg(dc);
+        }
         let tg_log_path = base_dir.join("tg_proxy.log");
         if let Some(s) = tg_log_path.to_str() {
             cmd.args(&["--log-file", s]);
@@ -544,17 +579,18 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                         match child.try_wait() {
                             Ok(Some(status)) => {
-                                eprintln!("[TgWsProxy] Telegram proxy process exited with status: {:?}", status);
+                                eprintln!(
+                                    "[TgWsProxy] process exited ({status:?}). HTTP proxy keeps running"
+                                );
                                 let _ = std::fs::remove_file(&pid_file_copy);
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    "tgwsproxy process exited",
-                                ));
+                                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                                return Ok(());
                             }
                             Ok(None) => {}
                             Err(e) => {
+                                eprintln!("[TgWsProxy] wait failed: {e}. HTTP proxy keeps running");
                                 let _ = std::fs::remove_file(&pid_file_copy);
-                                return Err(e);
+                                return Ok(());
                             }
                         }
                     }
@@ -608,15 +644,11 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         tokio::select! {
             res = &mut _http_handle => {
                 let _ = res;
-                std::process::exit(1);
+                return Err("HTTP proxy listener stopped".into());
             }
             res = &mut _socks5_handle => {
                 let _ = res;
-                std::process::exit(1);
-            }
-            res = &mut _tg_handle => {
-                let _ = res;
-                std::process::exit(1);
+                return Err("SOCKS5 listener stopped".into());
             }
             _ = std::future::pending::<()>() => {}
         }
@@ -629,23 +661,14 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                 if is_stdin_terminal() {
                     menu::pause_exit();
                 }
-                std::process::exit(1);
+                return Err("HTTP proxy listener stopped".into());
             }
             res = &mut _socks5_handle => {
                 eprintln!("\n[!] Ошибка: Порт SOCKS5 {} недоступен: {:?}", socks5_addr, res);
                 if is_stdin_terminal() {
                     menu::pause_exit();
                 }
-                std::process::exit(1);
-            }
-            res = &mut _tg_handle => {
-                eprintln!("\n[!] Ошибка: Служба Telegram (tgwsproxy) на порту {} завершилась: {:?}", tg_port, res);
-                eprintln!("    Возможно, порт занят другой копией службы.");
-                eprintln!("    Используйте: ZapretTVBridge.exe --restart");
-                if is_stdin_terminal() {
-                    menu::pause_exit();
-                }
-                std::process::exit(1);
+                return Err("SOCKS5 listener stopped".into());
             }
             sig = tokio::signal::ctrl_c() => {
                 if let Err(e) = sig {
@@ -661,7 +684,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     _socks5_handle.abort();
     _tg_handle.abort();
 
-    ensure_tg_port_free(tg_port, &base_dir);
+    stop_recorded_tg_pid(&base_dir);
 
     let drain_start = std::time::Instant::now();
     let drain_timeout = std::time::Duration::from_secs(3);

@@ -499,26 +499,24 @@ pub fn get_dc_ws_host(dc_id: usize, is_media: bool) -> String {
 }
 
 /// Minimalist, non-blocking RFC 6455 WebSocket client wrapper over TCP.
-pub struct RawWebSocket {
-    stream: TcpStream,
+pub struct RawWebSocket<S = TcpStream> {
+    stream: S,
     read_buf: BytesMut,
 }
 
-impl RawWebSocket {
+impl<S: AsyncRead + AsyncWrite + Unpin> RawWebSocket<S> {
     /// Establishes an RFC 6455 WebSocket connection on the given TCP stream.
-    pub async fn connect(mut stream: TcpStream, host: &str, path: &str) -> io::Result<Self> {
+    pub async fn connect(stream: TcpStream, host: &str, path: &str) -> io::Result<RawWebSocket<TcpStream>> {
+        RawWebSocket::handshake(stream, host, path).await
+    }
+
+    pub async fn handshake(mut stream: S, host: &str, path: &str) -> io::Result<Self> {
         let mut key_bytes = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut key_bytes);
-        let ws_key = hex::encode(key_bytes);
+        let ws_key = base64_encode(&key_bytes);
 
         let request = format!(
-            "GET {path} HTTP/1.1\r\n\
-            Host: {host}\r\n\
-            Upgrade: websocket\r\n\
-            Connection: Upgrade\r\n\
-            Sec-WebSocket-Key: {ws_key}\r\n\
-            Sec-WebSocket-Version: 13\r\n\
-            Sec-WebSocket-Protocol: binary\r\n\r\n"
+            "GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {ws_key}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n\r\n"
         );
 
         stream.write_all(request.as_bytes()).await?;
@@ -559,11 +557,15 @@ impl RawWebSocket {
 
     /// Sends a binary WebSocket frame with 4-byte client XOR masking (RFC 6455 Section 5.3).
     pub async fn send_binary(&mut self, payload: &[u8]) -> io::Result<()> {
+        self.write_frame(0x2, payload).await
+    }
+
+    async fn write_frame(&mut self, opcode: u8, payload: &[u8]) -> io::Result<()> {
         let mut mask_key = [0u8; 4];
         rand::thread_rng().fill_bytes(&mut mask_key);
 
         let mut frame_hdr = Vec::with_capacity(14);
-        frame_hdr.push(0x82); // FIN + Opcode 0x2 (Binary)
+        frame_hdr.push(0x80 | opcode);
 
         let len = payload.len();
         if len < 126 {
@@ -633,6 +635,13 @@ impl RawWebSocket {
                 payload_len = u64::from_be_bytes(self.read_buf[2..10].try_into().unwrap()) as usize;
             }
 
+            if payload_len > 16 * 1024 * 1024 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "WebSocket frame exceeds 16 MB",
+                ));
+            }
+
             let mask_size = if is_masked { 4 } else { 0 };
             let total_frame_size = hdr_size + mask_size + payload_len;
 
@@ -659,10 +668,7 @@ impl RawWebSocket {
                 // OP_CLOSE
                 return Ok(None);
             } else if opcode == 0x9 {
-                // OP_PING -> Send OP_PONG (0x8A)
-                let pong_hdr = [0x8A, 0x00];
-                let _ = self.stream.write_all(&pong_hdr).await;
-                let _ = self.stream.flush().await;
+                let _ = self.write_frame(0xA, &payload).await;
                 continue;
             } else if opcode == 0xA {
                 // OP_PONG -> Continue
@@ -709,6 +715,22 @@ where
     let relay_init = generate_relay_init(&parsed.proto_tag, dc_idx);
     let crypto_ctx = build_crypto_ctx(&parsed.dec_prekey_and_iv, &secret, &relay_init);
     let (mut c2u_crypto, mut u2c_crypto) = crypto_ctx.split();
+
+    if upstream_override.is_none() {
+        if let Some(mut ws) = connect_telegram_ws(parsed.dc_id, parsed.is_media).await {
+            if ws.send_binary(&relay_init).await.is_ok() {
+                return relay_via_websocket(
+                    client_stream,
+                    ws,
+                    c2u_crypto,
+                    u2c_crypto,
+                    codec,
+                    metrics,
+                )
+                .await;
+            }
+        }
+    }
 
     let target_addr = upstream_override.unwrap_or_else(|| get_dc_address(parsed.dc_id, parsed.is_test_dc));
 
@@ -801,6 +823,121 @@ where
         }
     }
 
+    Ok(())
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    let mut index = 0;
+    while index + 3 <= data.len() {
+        let n = ((data[index] as u32) << 16)
+            | ((data[index + 1] as u32) << 8)
+            | data[index + 2] as u32;
+        out.push(TABLE[(n >> 18) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        out.push(TABLE[((n >> 6) & 63) as usize] as char);
+        out.push(TABLE[(n & 63) as usize] as char);
+        index += 3;
+    }
+    if index < data.len() {
+        let remain = data.len() - index;
+        let mut n = (data[index] as u32) << 16;
+        if remain == 2 {
+            n |= (data[index + 1] as u32) << 8;
+        }
+        out.push(TABLE[(n >> 18) as usize] as char);
+        out.push(TABLE[((n >> 12) & 63) as usize] as char);
+        if remain == 2 {
+            out.push(TABLE[((n >> 6) & 63) as usize] as char);
+            out.push('=');
+        } else {
+            out.push('=');
+            out.push('=');
+        }
+    }
+    out
+}
+
+async fn connect_telegram_ws(
+    dc_id: usize,
+    is_media: bool,
+) -> Option<RawWebSocket<tokio_native_tls::TlsStream<TcpStream>>> {
+    let domain = get_dc_ws_host(dc_id, is_media);
+    let outbound = crate::dns::connect_to_remote(&domain, 443, false).await?;
+    let builder = native_tls::TlsConnector::builder().build().ok()?;
+    let connector = tokio_native_tls::TlsConnector::from(builder);
+    let tls = connector.connect(domain.as_str(), outbound.stream).await.ok()?;
+    RawWebSocket::handshake(tls, &domain, "/apiws").await.ok()
+}
+
+async fn relay_via_websocket<S, C>(
+    client_stream: C,
+    ws: RawWebSocket<S>,
+    mut c2u_crypto: ClientToUpstreamCrypto,
+    mut u2c_crypto: UpstreamToClientCrypto,
+    codec: ProtoCodec,
+    metrics: Arc<ProxyMetrics>,
+) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let ws = Arc::new(tokio::sync::Mutex::new(ws));
+    let (mut client_reader, mut client_writer) = tokio::io::split(client_stream);
+    let mut splitter = MsgSplitter::new(codec);
+
+    let ws_up = Arc::clone(&ws);
+    let m1 = Arc::clone(&metrics);
+    let client_to_upstream = async move {
+        let mut buf = [0u8; 16384];
+        let mut cipher_buf = [0u8; 16384];
+        loop {
+            let n = client_reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            m1.add_bytes_up(n as u64);
+            c2u_crypto.decrypt_client_inplace(&mut buf[..n]);
+            cipher_buf[..n].copy_from_slice(&buf[..n]);
+            c2u_crypto.encrypt_tg_inplace(&mut cipher_buf[..n]);
+            let packets = splitter.split(&cipher_buf[..n], &buf[..n]);
+            let mut guard = ws_up.lock().await;
+            for pkt in packets {
+                guard.send_binary(&pkt).await?;
+            }
+        }
+        Ok::<(), io::Error>(())
+    };
+
+    let m2 = Arc::clone(&metrics);
+    let upstream_to_client = async move {
+        loop {
+            let frame = {
+                let mut guard = ws.lock().await;
+                guard.read_binary().await?
+            };
+            let Some(payload) = frame else {
+                break;
+            };
+            if payload.is_empty() {
+                continue;
+            }
+            let mut payload = payload;
+            m2.add_bytes_down(payload.len() as u64);
+            u2c_crypto.decrypt_tg_inplace(&mut payload);
+            u2c_crypto.encrypt_client_inplace(&mut payload);
+            client_writer.write_all(&payload).await?;
+            client_writer.flush().await?;
+        }
+        let _ = client_writer.shutdown().await;
+        Ok::<(), io::Error>(())
+    };
+
+    tokio::select! {
+        result = client_to_upstream => result?,
+        result = upstream_to_client => result?,
+    }
     Ok(())
 }
 

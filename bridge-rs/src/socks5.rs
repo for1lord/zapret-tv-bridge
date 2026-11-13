@@ -12,7 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::time::timeout;
 
-use crate::dns::connect_to_remote;
+use crate::access::{self, upstream_allowed};
+use crate::dns::{self, connect_to_remote};
 use crate::metrics::ProxyMetrics;
 use crate::router::SmartRouter;
 
@@ -201,14 +202,30 @@ pub async fn handle_socks5_stream(
 ) -> io::Result<()> {
     let _conn_guard = metrics.connection_guard();
     tune_socket(&stream);
+    let peer_ok = stream.peer_addr().map(access::peer_allowed).unwrap_or(false);
+    if !peer_ok {
+        metrics.inc_errors();
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "client is outside the local subnet",
+        ));
+    }
+    let allow_local = stream
+        .peer_addr()
+        .map(|addr| addr.ip().is_loopback())
+        .unwrap_or(false);
 
     // 1. Handshake Phase (Greeting)
-    if let Err(e) = timeout(HANDSHAKE_TIMEOUT, negotiate_auth(&mut stream)).await {
-        metrics.inc_errors();
-        return Err(match e {
-            _ if e.to_string().contains("elapsed") => io::Error::new(io::ErrorKind::TimedOut, "SOCKS5 greeting timeout"),
-            _ => io::Error::new(io::ErrorKind::Other, "SOCKS5 greeting failed"),
-        });
+    match timeout(HANDSHAKE_TIMEOUT, negotiate_auth(&mut stream)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            metrics.inc_errors();
+            return Err(e);
+        }
+        Err(_) => {
+            metrics.inc_errors();
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "SOCKS5 greeting timeout"));
+        }
     }
 
     // 2. Request Parsing Phase
@@ -227,12 +244,22 @@ pub async fn handle_socks5_stream(
     let (host, port) = target.host_and_port();
 
     // 3. Routing Evaluation
-    let (_should_route, _reason) = router.should_route(&host);
+    let (should_route, reason) = router.should_route(&host);
+    if should_route {
+        router.observe_domain(&host, reason);
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !upstream_allowed(ip, allow_local) {
+            let _ = stream.write_all(&[SOCKS_VERSION, REP_GENERAL_FAILURE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
+            metrics.inc_errors();
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "upstream address is not public"));
+        }
+    }
 
     // 4. Outbound Connection
-    let remote_conn = connect_to_remote(&host, port).await;
-    let mut remote_stream = match remote_conn {
-        Some((remote, _remote_ip)) => remote,
+    let remote_conn = connect_to_remote(&host, port, allow_local).await;
+    let (mut remote_stream, remote_ip, confirm_cache) = match remote_conn {
+        Some(remote) => (remote.stream, remote.ip, remote.confirm_cache),
         None => {
             let _ = stream.write_all(&[SOCKS_VERSION, REP_HOST_UNREACHABLE, 0x00, ATYP_IPV4, 0, 0, 0, 0, 0, 0]).await;
             let _ = stream.flush().await;
@@ -266,6 +293,9 @@ pub async fn handle_socks5_stream(
         Ok((bytes_up, bytes_down)) => {
             metrics.add_bytes_up(bytes_up);
             metrics.add_bytes_down(bytes_down);
+            if confirm_cache && bytes_down > 0 {
+                dns::remember_confirmed_ip(&host, remote_ip);
+            }
             Ok(())
         }
         Err(e) => {

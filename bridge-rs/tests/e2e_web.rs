@@ -263,7 +263,7 @@ async fn test_tier1_pac_javascript_syntax_structure() {
     assert_eq!(status, 200);
     let script = String::from_utf8_lossy(&body);
     assert!(script.contains("function FindProxyForURL(url, host)"));
-    assert!(script.contains("var hostLower = host.toLowerCase();"));
+    assert!(script.contains("var h = String(host).toLowerCase();"));
     assert!(script.contains("return \"DIRECT\";"));
 
     // Verify balanced curly braces
@@ -293,13 +293,13 @@ async fn test_tier1_pac_streaming_domains_routing() {
 
     assert_eq!(status, 200);
     let script = String::from_utf8_lossy(&body);
-    assert!(script.contains("*googlevideo.com*"));
-    assert!(script.contains("*youtube.com*"));
-    assert!(script.contains("*ytimg.com*"));
-    assert!(script.contains("*ggpht.com*"));
-    assert!(script.contains("*youtu.be*"));
-    assert!(script.contains("*twitch.tv*"));
-    assert!(script.contains("*discord*"));
+    assert!(script.contains("\"googlevideo.com\""));
+    assert!(script.contains("\"youtube.com\""));
+    assert!(script.contains("\"ytimg.com\""));
+    assert!(script.contains("\"ggpht.com\""));
+    assert!(script.contains("\"youtu.be\""));
+    assert!(script.contains("\"twitch.tv\""));
+    assert!(script.contains("\"discord.com\""));
 }
 
 /// T1.10: PAC script domestic, intranet, and operating system direct routing rules.
@@ -311,16 +311,16 @@ async fn test_tier1_pac_domestic_and_lan_direct() {
 
     assert_eq!(status, 200);
     let script = String::from_utf8_lossy(&body);
-    assert!(script.contains("isPlainHostName(host)"));
-    assert!(script.contains("192.168.*"));
-    assert!(script.contains("10.*"));
-    assert!(script.contains("172.16.*"));
-    assert!(script.contains("*yandex*"));
-    assert!(script.contains("*vk.com*"));
-    assert!(script.contains("*gosuslugi*"));
-    assert!(script.contains("*sber*"));
-    assert!(script.contains("*apple.com*"));
-    assert!(script.contains("*microsoft.com*"));
+    assert!(script.contains("function bridgePlain"));
+    assert!(script.contains("a === 192 && b === 168"));
+    assert!(script.contains("a === 10"));
+    assert!(script.contains("a === 172 && b >= 16 && b <= 31"));
+    assert!(script.contains("\"yandex.ru\""));
+    assert!(script.contains("\"vk.com\""));
+    assert!(script.contains("\"gosuslugi.ru\""));
+    assert!(script.contains("\"sberbank.ru\""));
+    assert!(script.contains("\"apple.com\""));
+    assert!(script.contains("\"microsoft.com\""));
 }
 
 /// T1.11: Health endpoint returns HTTP 200 OK with application/json MIME type.
@@ -1077,7 +1077,7 @@ async fn test_tier4_smart_tv_pac_autoconfig_and_streaming() {
     assert!(pac_script.contains(&expected_proxy_rule));
 
     // 2. Smart TV evaluates target media domain: googlevideo.com
-    assert!(pac_script.contains("*googlevideo.com*"));
+    assert!(pac_script.contains("\"googlevideo.com\""));
 
     // 3. Smart TV establishes CONNECT tunnel to proxy
     let (mut tunnel, c_status, _) = http_connect_tunnel(server.addr, "127.0.0.1", mock_upstream.port())
@@ -1095,7 +1095,7 @@ async fn test_tier4_smart_tv_pac_autoconfig_and_streaming() {
     drop(tunnel);
 
     // 5. Verify domestic banking service resolves to DIRECT in PAC script
-    assert!(pac_script.contains("*sber*"));
+    assert!(pac_script.contains("\"sberbank.ru\""));
 
     // 6. Verify telemetry in /health reflects the 1MB transfer
     let (_, _, h_body) = server

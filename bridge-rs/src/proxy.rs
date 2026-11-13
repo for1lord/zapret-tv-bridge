@@ -6,7 +6,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
-use crate::dns::connect_to_remote;
+use crate::access::{self, upstream_allowed};
+use crate::dns::{self, connect_to_remote};
 use crate::metrics::ProxyMetrics;
 use crate::router::SmartRouter;
 use crate::socks5;
@@ -79,6 +80,13 @@ pub async fn handle_inbound_stream_with_web(
     web_router: axum::Router,
 ) -> io::Result<()> {
     tune_socket(&stream);
+    if !access::peer_allowed(peer_addr) {
+        metrics.inc_errors();
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "client is outside the local subnet",
+        ));
+    }
 
     // Non-destructive 1-byte peek
     let mut peek_buf = [0u8; 1];
@@ -215,15 +223,7 @@ pub async fn handle_http_stream_with_web(
     };
 
     let local_port = client.local_addr().map(|a| a.port()).unwrap_or(8080);
-    let is_local = if is_connect {
-        false
-    } else if path.starts_with('/') && !path.starts_with("//") {
-        true
-    } else if is_addressed_to_self(&target, local_port) {
-        true
-    } else {
-        false
-    };
+    let is_local = !is_connect && request_is_local(&path, &target, local_port);
 
     if is_connect {
         handle_http_connect(client, &target, header_len, &header_buf, router, metrics).await
@@ -271,21 +271,24 @@ pub async fn handle_http_connect(
         }
     };
 
-    let (_should_route, reason) = router.should_route(&host);
-    if reason != "exclude_direct" {
-        router.auto_add_domain(&host);
+    let (should_route, reason) = router.should_route(&host);
+    if should_route {
+        router.observe_domain(&host, reason);
+    }
+    let allow_local = client
+        .peer_addr()
+        .map(|addr| addr.ip().is_loopback())
+        .unwrap_or(false);
+    if let Some(blocked) = blocked_literal(&host, allow_local) {
+        let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        metrics.inc_errors();
+        return Err(blocked);
     }
 
     // Fast failover connection via DNS candidate cache or direct lookup
-    let remote_conn = match connect_to_remote(&host, port).await {
-        Some(conn) => Some(conn),
-        None => {
-            crate::dns::GLOBAL_DNS_CACHE.remove(&host);
-            connect_to_remote(&host, port).await
-        }
-    };
-    let mut remote = match remote_conn {
-        Some((stream, _)) => stream,
+    let remote_conn = connect_upstream(&host, port, allow_local).await;
+    let (mut remote, remote_ip, confirm_cache) = match remote_conn {
+        Some(conn) => (conn.stream, conn.ip, conn.confirm_cache),
         None => {
             metrics.inc_errors();
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
@@ -326,6 +329,9 @@ pub async fn handle_http_connect(
         Ok((up, down)) => {
             metrics.add_bytes_up(up);
             metrics.add_bytes_down(down);
+            if confirm_cache && down > 0 {
+                dns::remember_confirmed_ip(&host, remote_ip);
+            }
             Ok(())
         }
         Err(e) => {
@@ -346,20 +352,23 @@ pub async fn handle_plain_http(
     metrics: Arc<ProxyMetrics>,
 ) -> io::Result<()> {
     let (host, port) = parse_host_port(target, 80);
-    let (_should_route, reason) = router.should_route(&host);
-    if reason != "exclude_direct" {
-        router.auto_add_domain(&host);
+    let (should_route, reason) = router.should_route(&host);
+    if should_route {
+        router.observe_domain(&host, reason);
+    }
+    let allow_local = client
+        .peer_addr()
+        .map(|addr| addr.ip().is_loopback())
+        .unwrap_or(false);
+    if let Some(blocked) = blocked_literal(&host, allow_local) {
+        let _ = client.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        metrics.inc_errors();
+        return Err(blocked);
     }
 
-    let remote_conn = match connect_to_remote(&host, port).await {
-        Some(conn) => Some(conn),
-        None => {
-            crate::dns::GLOBAL_DNS_CACHE.remove(&host);
-            connect_to_remote(&host, port).await
-        }
-    };
-    let mut remote = match remote_conn {
-        Some((stream, _)) => stream,
+    let remote_conn = connect_upstream(&host, port, allow_local).await;
+    let (mut remote, remote_ip, confirm_cache) = match remote_conn {
+        Some(conn) => (conn.stream, conn.ip, conn.confirm_cache),
         None => {
             metrics.inc_errors();
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
@@ -370,7 +379,8 @@ pub async fn handle_plain_http(
 
     tune_socket(&remote);
 
-    if let Err(e) = remote.write_all(initial_request).await {
+    let outbound_request = rewrite_to_origin_form(initial_request);
+    if let Err(e) = remote.write_all(&outbound_request).await {
         metrics.inc_errors();
         return Err(e);
     }
@@ -388,6 +398,9 @@ pub async fn handle_plain_http(
         Ok((up, down)) => {
             metrics.add_bytes_up(up);
             metrics.add_bytes_down(down);
+            if confirm_cache && down > 0 {
+                dns::remember_confirmed_ip(&host, remote_ip);
+            }
             Ok(())
         }
         Err(e) => {
@@ -410,16 +423,128 @@ pub async fn handle_local_route(
     crate::web::handle_local_request(client, "GET", path, &[], &[], router).await
 }
 
+async fn connect_upstream(host: &str, port: u16, allow_local: bool) -> Option<dns::Outbound> {
+    if let Some(conn) = connect_to_remote(host, port, allow_local).await {
+        return Some(conn);
+    }
+    dns::GLOBAL_DNS_CACHE.remove(host);
+    connect_to_remote(host, port, allow_local).await
+}
+
+fn blocked_literal(host: &str, allow_local: bool) -> Option<io::Error> {
+    let Ok(ip) = host.parse::<std::net::IpAddr>() else {
+        return None;
+    };
+    if upstream_allowed(ip, allow_local) {
+        None
+    } else {
+        Some(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "upstream address is not public",
+        ))
+    }
+}
+
+fn request_is_local(path: &str, host_header: &str, local_port: u16) -> bool {
+    let bare = path.split('?').next().unwrap_or(path).split('#').next().unwrap_or(path);
+    if is_management_path(bare) {
+        return true;
+    }
+    if let Some(absolute_host) = absolute_request_host(path) {
+        return is_addressed_to_self(&absolute_host, local_port);
+    }
+    if path.starts_with('/') && !path.starts_with("//") {
+        let host = if host_header.starts_with('/') { "" } else { host_header };
+        return host.is_empty() || is_addressed_to_self(host, local_port);
+    }
+    is_addressed_to_self(host_header, local_port)
+}
+
+fn is_management_path(path: &str) -> bool {
+    let path = path.trim_end_matches('/');
+    let path = if path.is_empty() { "/" } else { path };
+    matches!(
+        path,
+        "/" | "/index.html"
+            | "/health"
+            | "/favicon.ico"
+            | "/proxy.pac"
+            | "/anticensority.pac"
+            | "/pac"
+            | "/wpad.dat"
+            | "/PROXY.PAC"
+            | "/Proxy.Pac"
+            | "/api/stats"
+            | "/stats"
+            | "/supercell.mobileconfig"
+            | "/brawlstars.mobileconfig"
+            | "/clashroyale.mobileconfig"
+            | "/comss.mobileconfig"
+            | "/nullsproxy.mobileconfig"
+    )
+}
+
+fn absolute_request_host(path: &str) -> Option<String> {
+    let rest = path
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .or_else(|| path.strip_prefix("//"))?;
+    let host = rest.split('/').next().unwrap_or(rest);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+/// Rewrites an absolute-form request line into origin-form before it reaches a website.
+pub fn rewrite_to_origin_form(raw: &[u8]) -> Vec<u8> {
+    let line_end = raw
+        .windows(2)
+        .position(|w| w == b"\r\n")
+        .unwrap_or(raw.len());
+    let line = &raw[..line_end];
+    let mut parts = line.splitn(3, |b| *b == b' ');
+    let Some(method) = parts.next() else {
+        return raw.to_vec();
+    };
+    let Some(target) = parts.next() else {
+        return raw.to_vec();
+    };
+    let version = parts.next().unwrap_or(b"HTTP/1.1");
+    if target.starts_with(b"/") {
+        return raw.to_vec();
+    }
+    let path = origin_path(target);
+    let mut out = Vec::with_capacity(raw.len());
+    out.extend_from_slice(method);
+    out.push(b' ');
+    out.extend_from_slice(path);
+    out.push(b' ');
+    out.extend_from_slice(version);
+    out.extend_from_slice(&raw[line_end..]);
+    out
+}
+
+fn origin_path(target: &[u8]) -> &[u8] {
+    let rest = if let Some(pos) = target.windows(3).position(|w| w == b"://") {
+        &target[pos + 3..]
+    } else if let Some(stripped) = target.strip_prefix(b"//") {
+        stripped
+    } else {
+        return b"/";
+    };
+    rest.iter()
+        .position(|b| *b == b'/')
+        .map(|idx| &rest[idx..])
+        .unwrap_or(b"/")
+}
+
 /// Checks whether an HTTP request target is addressed to the local proxy instance itself.
 pub fn is_addressed_to_self(target: &str, local_port: u16) -> bool {
     let (host, port) = parse_host_port(target, local_port);
-    let h = host.trim().to_ascii_lowercase();
-    let is_self_host = h == "127.0.0.1"
-        || h == "localhost"
-        || h == "0.0.0.0"
-        || h == "::1"
-        || h == "[::1]";
-    is_self_host && (port == local_port || port == 80)
+    let h = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
+    access::is_local_host(&h) && (port == local_port || port == 80)
 }
 
 /// Parses target host and port strictly for CONNECT (requires host:port).
@@ -516,5 +641,22 @@ mod tests {
             parse_host_port("", 443),
             ("127.0.0.1".to_string(), 443)
         );
+    }
+
+    #[test]
+    fn test_rewrite_absolute_form() {
+        let raw = b"GET http://example.com/watch?v=1 HTTP/1.1\r\nHost: example.com\r\n\r\n";
+        let rewritten = rewrite_to_origin_form(raw);
+        let text = String::from_utf8(rewritten).unwrap();
+        assert!(text.starts_with("GET /watch?v=1 HTTP/1.1\r\n"));
+        assert!(text.contains("Host: example.com"));
+    }
+
+    #[test]
+    fn test_origin_form_remote_is_not_local() {
+        assert!(!request_is_local("/watch", "youtube.com", 8080));
+        assert!(request_is_local("/health", "127.0.0.1:8080", 8080));
+        assert!(request_is_local("http://127.0.0.1:8080/proxy.pac", "127.0.0.1:8080", 8080));
+        assert!(!request_is_local("http://example.com/a", "example.com", 8080));
     }
 }

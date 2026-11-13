@@ -1,6 +1,6 @@
 [package]
 name = "zapret-tv-bridge-rs"
-version = "1.13.0"
+version = "1.14.0"
 edition = "2021"
 
 [lib]
@@ -31,6 +31,8 @@ hmac = "0.12"
 hex = "0.4"
 rand = "0.8"
 subtle = "2.5"
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 
 
 [profile.release]

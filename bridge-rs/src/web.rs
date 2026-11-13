@@ -289,7 +289,7 @@ async fn pac_handler(State(state): State<Arc<WebState>>, req: Request) -> Respon
         state.config.proxy_port,
     );
 
-    let script = pac::generate_pac_script(&host, port);
+    let script = pac::generate_served_pac(&host, port, &state.config.base_dir);
     let cl = script.len().to_string();
     (
         [

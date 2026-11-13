@@ -271,18 +271,16 @@ fn test_adversarial_zero_heap_allocation_hot_path() {
         assert_eq!(res, (false, "exclude_direct"));
     });
 
-    // 8. Subsequent query for an already registered domain: 0 allocations
-    // Use an isolated temporary router so we do not mutate production lists in repository
+    // 8. A repeated database lookup stays on the mmap path and does not allocate.
     let temp_test_dir = std::env::temp_dir().join(format!("zprt_zero_alloc_{}", std::process::id()));
     let temp_lists = temp_test_dir.join("lists");
     let _ = fs::create_dir_all(&temp_lists);
     fs::write(temp_test_dir.join("routing_rules.json"), r#"{"4": "test"}"#).unwrap();
     let temp_router = SmartRouter::new(&temp_test_dir);
-    // Prime the domain in isolated router
     let _ = temp_router.should_route("test");
     assert_zero_alloc("should_route already registered domain", || {
         let res = temp_router.should_route("test");
-        assert_eq!(res, (true, "target_routed"));
+        assert_eq!(res, (true, "database_routed"));
     });
     let _ = fs::remove_dir_all(&temp_test_dir);
 }
@@ -630,20 +628,22 @@ fn test_adversarial_multi_file_mtime_invalidation_matrix() {
         "Immediately after compilation, cache must be fresh"
     );
 
-    // Dynamic domain registration via auto_add_domain:
-    // When "cool" matches from database, it is registered into list-general-user.txt.
-    // This updates list-general-user.txt mtime, which invalidates routing_rules.bin!
+    // A database hit must not rewrite list-general-user.txt or invalidate the cache.
     assert_eq!(router.should_route("cool"), (true, "database_routed"));
     assert!(
+        !SmartRouter::is_compilation_needed(&test_dir),
+        "database lookup must not rewrite the user list"
+    );
+    router.observe_domain("brand-new-stream.example", "target_routed");
+    assert!(
         SmartRouter::is_compilation_needed(&test_dir),
-        "auto_add_domain write to user list file must trigger compilation requirement"
+        "observing a new target domain writes the user list and invalidates the cache"
     );
 
-    // Next router initialization recompiles to incorporate newly added domain into binary cache
     let router2 = SmartRouter::new(&test_dir);
     assert!(router2.is_mapped());
     assert!(!SmartRouter::is_compilation_needed(&test_dir));
-    assert_eq!(router2.should_route("cool"), (true, "target_routed"));
+    assert_eq!(router2.should_route("brand-new-stream.example"), (true, "target_routed"));
 
     // 4. Verify no stray .tmp files left in test directory
     if let Ok(entries) = fs::read_dir(&test_dir) {

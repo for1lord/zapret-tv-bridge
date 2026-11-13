@@ -1,3 +1,4 @@
+pub mod access;
 pub mod dns;
 pub mod faketls;
 pub mod menu;

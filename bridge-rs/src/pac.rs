@@ -1,165 +1,247 @@
 //! Dynamic Proxy Auto-Configuration (PAC) Script Generator.
-//! Directs targeted streaming video, communication, and media traffic
-//! through the acceleration proxy, while domestic services, developer platforms,
-//! operating system services, and local subnets connect DIRECT.
+//! Suffix lists match the router. Unlisted names stay DIRECT.
 
-/// Generates an RFC-compliant PAC autoconfig script directing selected domains
-/// through the proxy tunnel, and domestic/LAN services to DIRECT.
+use std::collections::HashSet;
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::SystemTime;
+
+use crate::router::{self, DIRECT_SUFFIXES, PROXY_SUFFIXES};
+
+struct PacTables {
+    stamp: String,
+    targets: String,
+    excludes: String,
+}
+
+static PAC_TABLES: Mutex<Option<PacTables>> = Mutex::new(None);
+
+/// Generates a PAC from the built-in suffix lists. Unlisted hosts stay DIRECT.
 pub fn generate_pac_script(proxy_host: &str, proxy_port: u16) -> String {
-    format!(
-r#"function FindProxyForURL(url, host) {{
+    let host = usable_proxy_host(proxy_host, "127.0.0.1");
+    render_pac(&host, proxy_port, "", "")
+}
+
+/// Same policy as [`generate_pac_script`], plus the on-disk anticensority lists.
+pub fn generate_served_pac(proxy_host: &str, proxy_port: u16, base_dir: &Path) -> String {
+    let host = usable_proxy_host(proxy_host, "127.0.0.1");
+    let lists = base_dir.join("lists");
+    let stamp = format!(
+        "{}|{}",
+        list_stamp(&lists.join("list-general.txt")),
+        list_stamp(&lists.join("list-general-user.txt"))
+    );
+    let (targets, excludes) = cached_tables(&lists, &stamp);
+    render_pac(&host, proxy_port, &targets, &excludes)
+}
+
+fn cached_tables(lists: &Path, stamp: &str) -> (String, String) {
+    if let Ok(guard) = PAC_TABLES.lock() {
+        if let Some(cached) = guard.as_ref() {
+            if cached.stamp == stamp {
+                return (cached.targets.clone(), cached.excludes.clone());
+            }
+        }
+    }
+    let (targets, excludes) = load_list_tables(lists);
+    if let Ok(mut guard) = PAC_TABLES.lock() {
+        *guard = Some(PacTables {
+            stamp: stamp.to_string(),
+            targets: targets.clone(),
+            excludes: excludes.clone(),
+        });
+    }
+    (targets, excludes)
+}
+
+fn usable_proxy_host(host: &str, default: &str) -> String {
+    let host = host.trim();
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return host.to_string();
+    }
+    if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        if inner.parse::<std::net::Ipv6Addr>().is_ok() {
+            return host.to_string();
+        }
+    }
+    if !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    {
+        return host.to_string();
+    }
+    default.to_string()
+}
+
+fn render_pac(host: &str, port: u16, target_object: &str, exclude_object: &str) -> String {
+    let mut script = String::new();
+    script.push_str(&js_array("BRIDGE_PROXY_SUFFIXES", PROXY_SUFFIXES));
+    script.push_str(&js_array("BRIDGE_DIRECT_SUFFIXES", DIRECT_SUFFIXES));
+    script.push_str("var BRIDGE_FILE_TARGETS = {");
+    script.push_str(target_object);
+    script.push_str("};\nvar BRIDGE_FILE_EXCLUDES = {");
+    script.push_str(exclude_object);
+    script.push_str("};\n");
+    script.push_str(&format!(
+        r#"function FindProxyForURL(url, host) {{
     var proxy = "PROXY {host}:{port}; DIRECT";
-    var hostLower = host.toLowerCase();
-
-    // 1. Streaming Video & Media Platforms
-    if (shExpMatch(hostLower, "*googlevideo.com*") ||
-        shExpMatch(hostLower, "*youtube.com*") ||
-        shExpMatch(hostLower, "*ytimg.com*") ||
-        shExpMatch(hostLower, "*ggpht.com*") ||
-        shExpMatch(hostLower, "*youtu.be*") ||
-        shExpMatch(hostLower, "*gstatic.com*") ||
-        shExpMatch(hostLower, "*youtubei.googleapis.com*") ||
-        shExpMatch(hostLower, "*fonts.googleapis.com*") ||
-        shExpMatch(hostLower, "*jnn-pa.googleapis.com*") ||
-        shExpMatch(hostLower, "*twitch.tv*") ||
-        shExpMatch(hostLower, "*ttvnw.net*") ||
-        shExpMatch(hostLower, "*jtvnw.net*") ||
-        shExpMatch(hostLower, "*twitchcdn.net*") ||
-        shExpMatch(hostLower, "*ext-twitch.tv*") ||
-        shExpMatch(hostLower, "*live-video.net*") ||
-        shExpMatch(hostLower, "*pornhub*") ||
-        shExpMatch(hostLower, "*phncdn*") ||
-        shExpMatch(hostLower, "*phprcdn*") ||
-        shExpMatch(hostLower, "*phnstatic*") ||
-        shExpMatch(hostLower, "*mainhub*") ||
-        shExpMatch(hostLower, "*etahub*") ||
-        shExpMatch(hostLower, "*aylo*") ||
-        shExpMatch(hostLower, "*nsimg*") ||
-        shExpMatch(hostLower, "*geekadm*") ||
-        shExpMatch(hostLower, "*rncdn7*") ||
-        shExpMatch(hostLower, "*trafficjunky*") ||
-        shExpMatch(hostLower, "*xhamster*") ||
-        shExpMatch(hostLower, "*xhcdn*") ||
-        shExpMatch(hostLower, "*xvideos*") ||
-        shExpMatch(hostLower, "*xv-cdn*") ||
-        shExpMatch(hostLower, "*youporn*") ||
-        shExpMatch(hostLower, "*ypncdn*") ||
-        shExpMatch(hostLower, "*redtube*") ||
-        shExpMatch(hostLower, "*redtubecdn*") ||
-        shExpMatch(hostLower, "*eporner*") ||
-        shExpMatch(hostLower, "*tube8*") ||
-        shExpMatch(hostLower, "*spankwire*") ||
-        shExpMatch(hostLower, "*hwcdn*") ||
-        shExpMatch(hostLower, "*futanari*") ||
-        shExpMatch(hostLower, "*hanime*") ||
-        shExpMatch(hostLower, "*hembed*") ||
-        shExpMatch(hostLower, "*daradara*") ||
-        shExpMatch(hostLower, "*moeli-desu*") ||
-        shExpMatch(hostLower, "*github.com*") ||
-        shExpMatch(hostLower, "*githubassets.com*") ||
-        shExpMatch(hostLower, "*githubusercontent.com*")) {{
-        return proxy;
-    }}
-
-    // 2. Gaming Services -> Direct (managed via dedicated configuration profiles)
-    if (shExpMatch(hostLower, "*supercell*") ||
-        shExpMatch(hostLower, "*clashroyale*") ||
-        shExpMatch(hostLower, "*brawlstars*") ||
-        shExpMatch(hostLower, "*clashofclans*")) {{
-        return "DIRECT";
-    }}
-
-    // 3. Social Media & Communication Services
-    if (shExpMatch(hostLower, "*instagram*") ||
-        shExpMatch(hostLower, "*cdninstagram*") ||
-        shExpMatch(hostLower, "*fbcdn*") ||
-        shExpMatch(hostLower, "*facebook*") ||
-        shExpMatch(hostLower, "*threads*") ||
-        shExpMatch(hostLower, "*meta.com*") ||
-        shExpMatch(hostLower, "*ig.me*") ||
-        shExpMatch(hostLower, "*fbsbx*") ||
-        shExpMatch(hostLower, "*discord*") ||
-        shExpMatch(hostLower, "*discordapp*") ||
-        shExpMatch(hostLower, "*storage.googleapis.com*") ||
-        shExpMatch(hostLower, "*twitter*") ||
-        shExpMatch(hostLower, "*x.com*")) {{
-        return proxy;
-    }}
-
-    // 4. Developer & Cloud Platforms -> DIRECT
-    if (shExpMatch(hostLower, "*cloudcode-pa.googleapis.com*") ||
-        shExpMatch(hostLower, "*daily-cloudcode-pa.googleapis.com*") ||
-        shExpMatch(hostLower, "*google.com*") ||
-        shExpMatch(hostLower, "*gvt1.com*") ||
-        shExpMatch(hostLower, "*chatgpt.com*") ||
-        shExpMatch(hostLower, "*openai.com*") ||
-        shExpMatch(hostLower, "*anthropic.com*") ||
-        shExpMatch(hostLower, "*claude.ai*") ||
-        shExpMatch(hostLower, "*geohide.ru*") ||
-        shExpMatch(hostLower, "*dns-ai.ru*")) {{
-        return "DIRECT";
-    }}
-
-    // 5. Operating System Core Services -> DIRECT
-    if (shExpMatch(hostLower, "*apple.com*") ||
-        shExpMatch(hostLower, "*itunes.com*") ||
-        shExpMatch(hostLower, "*mzstatic.com*") ||
-        shExpMatch(hostLower, "*icloud.com*") ||
-        shExpMatch(hostLower, "*aaplimg.com*") ||
-        shExpMatch(hostLower, "*akadns.net*") ||
-        shExpMatch(hostLower, "*windowsupdate*") ||
-        shExpMatch(hostLower, "*microsoft.com*")) {{
-        return "DIRECT";
-    }}
-
-    // 6. Local & Intranet Subnets -> DIRECT
-    if (isPlainHostName(host) ||
-        shExpMatch(hostLower, "*.local") ||
-        shExpMatch(hostLower, "*.lan") ||
-        shExpMatch(hostLower, "10.*") ||
-        shExpMatch(hostLower, "172.16.*") ||
-        shExpMatch(hostLower, "172.17.*") ||
-        shExpMatch(hostLower, "172.18.*") ||
-        shExpMatch(hostLower, "172.19.*") ||
-        shExpMatch(hostLower, "172.2*") ||
-        shExpMatch(hostLower, "172.3*") ||
-        shExpMatch(hostLower, "192.168.*") ||
-        shExpMatch(hostLower, "127.*")) {{
-        return "DIRECT";
-    }}
-
-    // 7. Domestic Services & Portals -> DIRECT
-    if (shExpMatch(hostLower, "*.ru") &&
-        (shExpMatch(hostLower, "*yandex*") ||
-         shExpMatch(hostLower, "*vk.com*") ||
-         shExpMatch(hostLower, "*gosuslugi*") ||
-         shExpMatch(hostLower, "*sber*") ||
-         shExpMatch(hostLower, "*ozon*") ||
-         shExpMatch(hostLower, "*wildberries*") ||
-         shExpMatch(hostLower, "*tinkoff*") ||
-         shExpMatch(hostLower, "*mail.ru*"))) {{
-        return "DIRECT";
-    }}
-
-    // 8. Media Portals & Trackers
-    if (shExpMatch(hostLower, "*rutracker*") ||
-        shExpMatch(hostLower, "*rutor*") ||
-        shExpMatch(hostLower, "*nnmclub*") ||
-        shExpMatch(hostLower, "*flibusta*") ||
-        shExpMatch(hostLower, "*animevost*") ||
-        shExpMatch(hostLower, "*anilibria*") ||
-        shExpMatch(hostLower, "*animedia*") ||
-        shExpMatch(hostLower, "*jut.su*")) {{
-        return proxy;
-    }}
-
-    // Default: Route all unlisted / foreign traffic through Bridge Smart Router
-    return proxy;
+    var h = String(host).toLowerCase();
+    if (bridgePlain(h) || bridgeEnds(h, ".local") || bridgeEnds(h, ".lan") || bridgeEnds(h, ".internal") || h === "localhost") return "DIRECT";
+    if (bridgePrivate(h)) return "DIRECT";
+    if (bridgeListed(h, BRIDGE_DIRECT_SUFFIXES) || bridgeObj(h, BRIDGE_FILE_EXCLUDES)) return "DIRECT";
+    if (bridgeListed(h, BRIDGE_PROXY_SUFFIXES) || bridgeObj(h, BRIDGE_FILE_TARGETS)) return proxy;
+    return "DIRECT";
 }}
-"#,
-        host = proxy_host,
-        port = proxy_port
+function bridgePlain(h) {{ return h.indexOf(".") < 0 && h.indexOf(":") < 0; }}
+function bridgeEnds(h, suf) {{ return h.length >= suf.length && h.substring(h.length - suf.length) === suf; }}
+function bridgeListed(h, list) {{
+    var i, item, suf;
+    for (i = 0; i < list.length; i++) {{
+        item = list[i];
+        if (h === item) return true;
+        suf = "." + item;
+        if (h.length > suf.length && h.substring(h.length - suf.length) === suf) return true;
+    }}
+    return false;
+}}
+function bridgeObj(h, table) {{
+    if (table[h]) return true;
+    var i = 0;
+    while ((i = h.indexOf(".", i)) >= 0) {{
+        i++;
+        if (table[h.substring(i)]) return true;
+    }}
+    return false;
+}}
+function bridgePrivate(h) {{
+    var p = h.split(".");
+    if (p.length !== 4) return false;
+    var a = parseInt(p[0], 10), b = parseInt(p[1], 10);
+    if (isNaN(a) || isNaN(b)) return false;
+    if (a === 10 || a === 127) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+}}
+"#
+    ));
+    script
+}
+
+fn js_array(name: &str, items: &[&str]) -> String {
+    let mut out = format!("var {name} = [");
+    let mut first = true;
+    for item in items {
+        if !js_token_ok(item) {
+            continue;
+        }
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push('"');
+        out.push_str(item);
+        out.push('"');
+    }
+    out.push_str("];\n");
+    out
+}
+
+fn js_token_ok(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+}
+
+fn list_stamp(path: &Path) -> String {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|| "0".to_string())
+}
+
+fn load_list_tables(lists: &Path) -> (String, String) {
+    let mut targets = HashSet::new();
+    let mut excludes = HashSet::new();
+    read_domain_file(&lists.join("list-google.txt"), &mut targets);
+    read_domain_file(&lists.join("list-general-user.txt"), &mut targets);
+    read_domain_file(&lists.join("list-exclude.txt"), &mut excludes);
+    read_domain_file(&lists.join("list-exclude-user.txt"), &mut excludes);
+    targets.retain(|d| !router::host_matches_any(d, DIRECT_SUFFIXES));
+    (
+        js_object(&minimize_suffixes(targets)),
+        js_object(&minimize_suffixes(excludes)),
     )
+}
+
+fn read_domain_file(path: &Path, into: &mut HashSet<String>) {
+    let Ok(file) = fs::File::open(path) else {
+        return;
+    };
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else {
+            continue;
+        };
+        let trimmed = line.split('#').next().unwrap_or("").trim().to_ascii_lowercase();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let norm = trimmed
+            .strip_prefix("*.")
+            .or_else(|| trimmed.strip_prefix('.'))
+            .unwrap_or(&trimmed)
+            .trim_matches('.');
+        if js_token_ok(norm) && norm.contains('.') {
+            into.insert(norm.to_string());
+        }
+    }
+}
+
+fn minimize_suffixes(domains: HashSet<String>) -> Vec<String> {
+    let mut ordered: Vec<String> = domains.into_iter().collect();
+    ordered.sort_by_key(|d| d.len());
+    let mut kept = HashSet::new();
+    for domain in ordered {
+        if suffix_covered(&domain, &kept) {
+            continue;
+        }
+        kept.insert(domain);
+    }
+    let mut out: Vec<String> = kept.into_iter().collect();
+    out.sort();
+    out
+}
+
+fn suffix_covered(domain: &str, kept: &HashSet<String>) -> bool {
+    let mut rest = domain;
+    while let Some((_, parent)) = rest.split_once('.') {
+        if kept.contains(parent) {
+            return true;
+        }
+        rest = parent;
+    }
+    false
+}
+
+fn js_object(domains: &[String]) -> String {
+    let mut out = String::new();
+    for (i, domain) in domains.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push('"');
+        out.push_str(domain);
+        out.push_str("\":1");
+    }
+    out
 }
 
 /// Helper function to parse host and port from a Host header or fallback cascade.
@@ -251,14 +333,12 @@ mod tests {
         let script = generate_pac_script("192.168.1.150", 8080);
         assert!(script.contains("PROXY 192.168.1.150:8080; DIRECT"));
         assert!(script.contains("function FindProxyForURL(url, host)"));
-        assert!(script.contains("*googlevideo.com*"));
-        assert!(script.contains("*youtube.com*"));
-        assert!(script.contains("*twitch.tv*"));
-        assert!(script.contains("*ttvnw.net*"));
-        assert!(script.contains("*jtvnw.net*"));
-        assert!(script.contains("*twitchcdn.net*"));
-        assert!(script.contains("*discord*"));
+        assert!(script.contains("\"googlevideo.com\""));
+        assert!(script.contains("\"youtube.com\""));
+        assert!(script.contains("\"twitch.tv\""));
+        assert!(script.contains("\"x.com\""));
         assert!(script.contains("return \"DIRECT\";"));
+        assert!(!script.contains("*x.com*"));
     }
 
     #[test]

@@ -474,26 +474,220 @@ pub struct SmartRouter {
     database_v4: Vec<Ipv4Interval>,
 }
 
-static RELOAD_NOTIFY: std::sync::LazyLock<tokio::sync::mpsc::UnboundedSender<()>> = std::sync::LazyLock::new(|| {
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
-    tokio::spawn(async move {
-        while rx.recv().await.is_some() {
-            tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
-            while rx.try_recv().is_ok() {}
-
-            println!("[SmartRouter] Reloading Zapret DPI service with updated hostlists...");
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                let _ = std::process::Command::new("cmd")
-                    .args(["/c", "sc stop zapret && sc start zapret"])
-                    .creation_flags(0x08000000)
-                    .output();
+static RELOAD_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RELOAD_NOTIFY: std::sync::LazyLock<std::sync::mpsc::Sender<()>> = std::sync::LazyLock::new(|| {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let _ = std::thread::Builder::new()
+        .name("zapret-reload".into())
+        .spawn(move || {
+            while rx.recv().is_ok() {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                while std::time::Instant::now() < deadline {
+                    let left = deadline.saturating_duration_since(std::time::Instant::now());
+                    if rx.recv_timeout(left).is_err() {
+                        break;
+                    }
+                }
+                while rx.try_recv().is_ok() {}
+                if !RELOAD_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
+                }
+                restart_zapret_service();
             }
-        }
-    });
+        });
     tx
 });
+
+/// Enables the debounced Zapret service restart after a new hostlist line is written.
+pub fn arm_service_reload() {
+    RELOAD_ARMED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn restart_zapret_service() {
+    println!("[SmartRouter] Reloading Zapret DPI service with updated hostlists...");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = std::process::Command::new("sc")
+            .args(["stop", "zapret"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let _ = std::process::Command::new("sc")
+            .args(["start", "zapret"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+}
+
+/// Domains the bridge itself always sends through the PC.
+pub const PROXY_SUFFIXES: &[&str] = &[
+    "googlevideo.com",
+    "youtube.com",
+    "video.google.com",
+    "ytimg.com",
+    "ggpht.com",
+    "youtu.be",
+    "youtubei.googleapis.com",
+    "fonts.googleapis.com",
+    "jnn-pa.googleapis.com",
+    "gstatic.com",
+    "game.clashroyaleapp.com",
+    "game.brawlstarsgame.com",
+    "game.clashofclans.com",
+    "game.squadbustersgame.com",
+    "discord.com",
+    "discord.gg",
+    "discordapp.com",
+    "discordapp.net",
+    "storage.googleapis.com",
+    "commondatastorage.googleapis.com",
+    "instagram.com",
+    "cdninstagram.com",
+    "fbcdn.net",
+    "facebook.com",
+    "threads.net",
+    "ig.me",
+    "meta.com",
+    "fbsbx.com",
+    "twitter.com",
+    "twimg.com",
+    "x.com",
+    "twitch.tv",
+    "ttvnw.net",
+    "jtvnw.net",
+    "twitchcdn.net",
+    "ext-twitch.tv",
+    "live-video.net",
+    "rutracker.org",
+    "rutracker.cc",
+    "rutracker.net",
+    "rutor.org",
+    "rutor.info",
+    "rutor.is",
+    "nnmclub.to",
+    "flibusta.is",
+    "flibusta.site",
+    "pornhub.com",
+    "pornhub.org",
+    "pornhubpremium.com",
+    "phncdn.com",
+    "phprcdn.com",
+    "phnstatic.com",
+    "mainhub.com",
+    "etahub.com",
+    "aylo.com",
+    "nsimg.net",
+    "geekadm.net",
+    "rncdn7.com",
+    "trafficjunky.com",
+    "trafficjunky.net",
+    "xhamster.com",
+    "xhcdn.com",
+    "xvideos.com",
+    "xv-cdn.com",
+    "youporn.com",
+    "ypncdn.com",
+    "redtube.com",
+    "redtubecdn.com",
+    "eporner.com",
+    "tube8.com",
+    "spankwire.com",
+    "hwcdn.net",
+    "futanari.xxx",
+    "hanime1.me",
+    "hanime.tv",
+    "hanime-cdn.com",
+    "hanimeone.me",
+    "hembed.com",
+    "moeli-desu.com",
+    "daradara.me",
+];
+
+/// Domains that stay off the bridge even if a broader list contains them.
+pub const DIRECT_SUFFIXES: &[&str] = &[
+    "cloudcode-pa.googleapis.com",
+    "daily-cloudcode-pa.googleapis.com",
+    "gvt1.com",
+    "geohide.ru",
+    "dns-ai.ru",
+    "chatgpt.com",
+    "openai.com",
+    "anthropic.com",
+    "claude.ai",
+    "apple.com",
+    "mzstatic.com",
+    "icloud.com",
+    "itunes.com",
+    "aaplimg.com",
+    "akadns.net",
+    "microsoft.com",
+    "windowsupdate.com",
+    "supercell.com",
+    "supercellid.com",
+    "clashroyale.com",
+    "brawlstars.com",
+    "clashofclans.com",
+    "yandex.ru",
+    "yandex.net",
+    "vk.com",
+    "vk.ru",
+    "gosuslugi.ru",
+    "sberbank.ru",
+    "sber.ru",
+    "ozon.ru",
+    "wildberries.ru",
+    "tinkoff.ru",
+    "mail.ru",
+];
+
+/// A label with no dot matches only the full host, so a database entry `ua` does not capture every `.ua` name.
+fn suffix_is_matchable(full: &[u8], suffix: &[u8]) -> bool {
+    suffix.contains(&b'.') || suffix.len() == full.len()
+}
+
+fn clean_domain_name(domain: &str) -> Option<String> {
+    let norm = NormalizedDomain::try_from_str(domain)?;
+    let text = norm.as_str();
+    if text.parse::<IpAddr>().is_ok() {
+        return None;
+    }
+    if text.is_empty()
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
+    {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+fn shortest_static_suffix(domain: &str) -> Option<String> {
+    PROXY_SUFFIXES
+        .iter()
+        .copied()
+        .filter(|suffix| host_has_suffix(domain, suffix))
+        .min_by_key(|suffix| suffix.len())
+        .map(|suffix| suffix.to_string())
+}
+
+/// True when `domain` is exactly `suffix` or a subdomain of it.
+#[inline]
+pub fn host_has_suffix(domain: &str, suffix: &str) -> bool {
+    if domain == suffix {
+        return true;
+    }
+    domain.len() > suffix.len()
+        && domain.as_bytes().get(domain.len() - suffix.len() - 1) == Some(&b'.')
+        && domain.ends_with(suffix)
+}
+
+pub fn host_matches_any(domain: &str, suffixes: &[&str]) -> bool {
+    suffixes.iter().any(|suffix| host_has_suffix(domain, suffix))
+}
+
+const BIG_LIST_BYTES: u64 = 256 * 1024;
 
 impl SmartRouter {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
@@ -528,7 +722,7 @@ impl SmartRouter {
         let mut new_user = HashSet::new();
         let mut new_exclude = HashSet::new();
 
-        Self::load_list_file(self.lists_dir.join("list-general.txt"), &mut new_target);
+        Self::load_list_file_bounded(self.lists_dir.join("list-general.txt"), &mut new_target);
         Self::load_list_file(self.lists_dir.join("list-google.txt"), &mut new_target);
         Self::load_list_file(self.lists_dir.join("list-general-user.txt"), &mut new_user);
         Self::load_list_file(self.lists_dir.join("list-exclude.txt"), &mut new_exclude);
@@ -568,11 +762,30 @@ impl SmartRouter {
         *self.exclude_domains.write() = new_exclude;
     }
 
+    /// Loads a domain file unless it is the multi-megabyte anticensority list.
+    /// That list is already searched through the memory-mapped binary cache.
+    fn load_list_file_bounded<P: AsRef<Path>>(path: P, target: &mut HashSet<String>) {
+        let path = path.as_ref();
+        match fs::metadata(path) {
+            Ok(meta) if meta.len() > BIG_LIST_BYTES => {
+                eprintln!(
+                    "[SmartRouter] {} is {:.1} MB and stays in the binary cache",
+                    path.display(),
+                    meta.len() as f64 / 1_048_576.0
+                );
+            }
+            _ => Self::load_list_file(path, target),
+        }
+    }
+
     /// Loads list lines with comment stripping and wildcard normalization (*.phncdn.com -> phncdn.com).
     fn load_list_file<P: AsRef<Path>>(path: P, target: &mut HashSet<String>) {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
-            for line in reader.lines().map_while(Result::ok) {
+            for line in reader.lines() {
+                let Ok(line) = line else {
+                    continue;
+                };
                 let trimmed = line.split('#').next().unwrap_or("").trim().to_lowercase();
                 if trimmed.is_empty() {
                     continue;
@@ -596,7 +809,10 @@ impl SmartRouter {
     fn load_cidr_file<P: AsRef<Path>>(path: P, v4: &mut Vec<Ipv4Interval>, v6: &mut Vec<Ipv6Interval>) {
         if let Ok(file) = File::open(path) {
             let reader = BufReader::new(file);
-            for line in reader.lines().map_while(Result::ok) {
+            for line in reader.lines() {
+                let Ok(line) = line else {
+                    continue;
+                };
                 let trimmed = line.split('#').next().unwrap_or("").trim();
                 if trimmed.is_empty() {
                     continue;
@@ -966,10 +1182,14 @@ impl SmartRouter {
             payload_len,
             cidr_table_offset,
             cidr_table_len,
-            target_ipv4_cidr_count: target_v4.len() as u16,
-            exclude_ipv4_cidr_count: exclude_v4.len() as u16,
-            target_ipv6_cidr_count: target_v6.len() as u16,
-            exclude_ipv6_cidr_count: exclude_v6.len() as u16,
+            target_ipv4_cidr_count: u16::try_from(target_v4.len())
+                .map_err(|_| "target IPv4 CIDR count exceeds 65535")?,
+            exclude_ipv4_cidr_count: u16::try_from(exclude_v4.len())
+                .map_err(|_| "exclude IPv4 CIDR count exceeds 65535")?,
+            target_ipv6_cidr_count: u16::try_from(target_v6.len())
+                .map_err(|_| "target IPv6 CIDR count exceeds 65535")?,
+            exclude_ipv6_cidr_count: u16::try_from(exclude_v6.len())
+                .map_err(|_| "exclude IPv6 CIDR count exceeds 65535")?,
             target_list_domain_count: target_domains.len() as u32,
             exclude_list_domain_count: exclude_domains.len() as u32,
             checksum: 0,
@@ -1139,6 +1359,9 @@ impl SmartRouter {
         {
             let exc = self.exclude_domains.read();
             for sub_bytes in DomainSuffixIter::new(domain_bytes) {
+                if !suffix_is_matchable(domain_bytes, sub_bytes) {
+                    continue;
+                }
                 let sub_str = unsafe { std::str::from_utf8_unchecked(sub_bytes) };
                 if exc.contains(sub_str) {
                     return (false, "exclude_direct");
@@ -1146,157 +1369,11 @@ impl SmartRouter {
             }
         }
 
-        // Developer & Cloud direct services
-        const DEV_SERVICES: &[&str] = &[
-            "cloudcode-pa.googleapis.com",
-            "daily-cloudcode-pa.googleapis.com",
-            "gvt1.com",
-            "geohide.ru",
-            "dns-ai.ru",
-            "chatgpt.com",
-            "openai.com",
-            "anthropic.com",
-            "claude.ai",
-        ];
-        if DEV_SERVICES.iter().any(|d| domain_str.contains(d)) {
+        if host_matches_any(domain_str, PROXY_SUFFIXES) {
+            return (true, "target_routed");
+        }
+        if host_matches_any(domain_str, DIRECT_SUFFIXES) {
             return (false, "exclude_direct");
-        }
-
-        // Apple infrastructure direct services
-        const APPLE_SERVICES: &[&str] = &[
-            "apple.com", "mzstatic.com", "icloud.com", "itunes.com", "aaplimg.com", "akadns.net",
-        ];
-        if APPLE_SERVICES.iter().any(|a| domain_str.contains(a)) {
-            return (false, "exclude_direct");
-        }
-
-        // Supercell Web (non-game endpoints)
-        const SUPERCELL_WEB: &[&str] = &[
-            "supercell.com", "supercellid.com",
-        ];
-        if SUPERCELL_WEB.iter().any(|s| domain_str.contains(s)) && !domain_str.starts_with("game.") {
-            return (false, "exclude_direct");
-        }
-
-        // -------------------------------------------------------------
-        // Priority 2: Target lists, Priority Streaming, Game services
-        // -------------------------------------------------------------
-        if domain_str.contains("googlevideo")
-            || domain_str.contains("youtube")
-            || domain_str.contains("ytimg")
-            || domain_str.contains("ggpht")
-            || domain_str.contains("youtu.be")
-            || domain_str.contains("gstatic.com")
-            || domain_str.contains("youtubei.googleapis.com")
-            || domain_str.contains("fonts.googleapis.com")
-            || domain_str.contains("jnn-pa.googleapis.com")
-        {
-            return (true, "target_routed");
-        }
-
-        if domain_str.starts_with("game.clashroyaleapp.com")
-            || domain_str.starts_with("game.brawlstarsgame.com")
-            || domain_str.starts_with("game.clashofclans.com")
-            || domain_str.starts_with("game.squadbustersgame.com")
-        {
-            return (true, "target_routed");
-        }
-
-        if domain_str.contains("discord")
-            || domain_str.contains("discordapp")
-            || domain_str.contains("discord.gg")
-            || domain_str.contains("storage.googleapis.com")
-        {
-            return (true, "target_routed");
-        }
-
-        if domain_str.contains("instagram")
-            || domain_str.contains("cdninstagram")
-            || domain_str.contains("fbcdn")
-            || domain_str.contains("facebook")
-            || domain_str.contains("threads")
-            || domain_str.contains("ig.me")
-            || domain_str.contains("meta.com")
-            || domain_str.contains("fbsbx")
-        {
-            return (true, "target_routed");
-        }
-
-        if domain_str.contains("twitter")
-            || domain_str.contains("twimg")
-            || domain_str == "x.com"
-            || domain_str.ends_with(".x.com")
-        {
-            return (true, "target_routed");
-        }
-
-        if domain_str.contains("twitch.tv")
-            || domain_str.contains("ttvnw.net")
-            || domain_str.contains("jtvnw.net")
-            || domain_str.contains("twitchcdn.net")
-            || domain_str.contains("ext-twitch.tv")
-            || domain_str.contains("live-video.net")
-        {
-            return (true, "target_routed");
-        }
-
-        const MEDIA_BASE_DOMAINS: &[&str] = &[
-            "twitch.tv",
-            "ttvnw.net",
-            "jtvnw.net",
-            "twitchcdn.net",
-            "ext-twitch.tv",
-            "live-video.net",
-            "rutracker.org",
-            "rutracker.cc",
-            "rutracker.net",
-            "rutor.org",
-            "rutor.info",
-            "rutor.is",
-            "nnmclub.to",
-            "flibusta.is",
-            "pornhub.com",
-            "pornhub.org",
-            "pornhubpremium.com",
-            "phncdn.com",
-            "phprcdn.com",
-            "phnstatic.com",
-            "mainhub.com",
-            "etahub.com",
-            "aylo.com",
-            "nsimg.net",
-            "geekadm.net",
-            "rncdn7.com",
-            "trafficjunky.com",
-            "trafficjunky.net",
-            "xhamster.com",
-            "xhcdn.com",
-            "xvideos.com",
-            "xv-cdn.com",
-            "youporn.com",
-            "ypncdn.com",
-            "redtube.com",
-            "redtubecdn.com",
-            "eporner.com",
-            "tube8.com",
-            "spankwire.com",
-            "hwcdn.net",
-            "futanari.xxx",
-            "hanime1.me",
-            "hanime.tv",
-            "hanime-cdn.com",
-            "hanimeone.me",
-            "hembed.com",
-            "vdownload.hembed.com",
-            "moeli-desu.com",
-            "daradara.me",
-        ];
-
-        for sub_bytes in DomainSuffixIter::new(domain_bytes) {
-            let sub_str = unsafe { std::str::from_utf8_unchecked(sub_bytes) };
-            if MEDIA_BASE_DOMAINS.contains(&sub_str) {
-                return (true, "target_routed");
-            }
         }
 
         // Check target lists (list-general.txt, list-google.txt, user lists, auto-added)
@@ -1305,6 +1382,9 @@ impl SmartRouter {
             let user = self.user_domains.read();
             let auto = self.auto_added_domains.read();
             for sub_bytes in DomainSuffixIter::new(domain_bytes) {
+                if !suffix_is_matchable(domain_bytes, sub_bytes) {
+                    continue;
+                }
                 let sub_str = unsafe { std::str::from_utf8_unchecked(sub_bytes) };
                 if target.contains(sub_str) || user.contains(sub_str) || auto.contains(sub_str) {
                     return (true, "target_routed");
@@ -1317,6 +1397,9 @@ impl SmartRouter {
         // -------------------------------------------------------------
         if let Some(mmap) = &self.mmap {
             for sub_bytes in DomainSuffixIter::new(domain_bytes) {
+                if !suffix_is_matchable(domain_bytes, sub_bytes) {
+                    continue;
+                }
                 let sub_len = sub_bytes.len();
                 if sub_len == 0 || sub_len >= BUCKET_TABLE_ENTRIES {
                     continue;
@@ -1332,8 +1415,6 @@ impl SmartRouter {
                 if end <= mmap.len() {
                     let bucket_slice = &mmap[start..end];
                     if binary_search_bucket(bucket_slice, sub_len, sub_bytes) {
-                        let sub_str = unsafe { std::str::from_utf8_unchecked(sub_bytes) };
-                        self.auto_add_domain(sub_str);
                         return (true, "database_routed");
                     }
                 }
@@ -1346,24 +1427,103 @@ impl SmartRouter {
         (false, "default_direct")
     }
 
-    /// Dynamically tracks new target domains in-memory and appends to user list file.
-    pub fn auto_add_domain(&self, domain: &str) {
+    /// Records a domain the proxy actually forwarded.
+    ///
+    /// `default_direct` is ignored. A name already covered by a suffix in the
+    /// lists or the binary cache is ignored, so CDN hostnames do not append a
+    /// new line or restart Zapret.
+    pub fn observe_domain(&self, host: &str, reason: &str) {
+        if reason != "target_routed" && reason != "database_routed" {
+            return;
+        }
+        let Some(domain) = clean_domain_name(host) else {
+            return;
+        };
+        if self.domain_persisted(&domain) {
+            return;
+        }
+        let store = shortest_static_suffix(&domain).unwrap_or(domain);
+        if self.domain_persisted(&store) {
+            return;
+        }
+        self.auto_add_domain(&store);
+    }
+
+    fn domain_persisted(&self, domain: &str) -> bool {
+        let Some(norm) = NormalizedDomain::try_from_str(domain) else {
+            return true;
+        };
+        let bytes = norm.as_bytes();
         {
-            let mut auto = self.auto_added_domains.write();
             let target = self.target_domains.read();
             let user = self.user_domains.read();
+            let auto = self.auto_added_domains.read();
+            let exc = self.exclude_domains.read();
+            for sub in DomainSuffixIter::new(bytes) {
+                if !suffix_is_matchable(bytes, sub) {
+                    continue;
+                }
+                let sub_str = unsafe { std::str::from_utf8_unchecked(sub) };
+                if exc.contains(sub_str)
+                    || target.contains(sub_str)
+                    || user.contains(sub_str)
+                    || auto.contains(sub_str)
+                {
+                    return true;
+                }
+            }
+        }
+        self.mmap_has_suffix(bytes)
+    }
 
-            if target.contains(domain) || user.contains(domain) || auto.contains(domain) {
+    fn mmap_has_suffix(&self, domain_bytes: &[u8]) -> bool {
+        let Some(mmap) = &self.mmap else {
+            return false;
+        };
+        for sub_bytes in DomainSuffixIter::new(domain_bytes) {
+            if !suffix_is_matchable(domain_bytes, sub_bytes) {
+                continue;
+            }
+            let sub_len = sub_bytes.len();
+            if sub_len == 0 || sub_len >= BUCKET_TABLE_ENTRIES {
+                continue;
+            }
+            let entry = self.bucket_table[sub_len];
+            if entry.byte_len == 0 {
+                continue;
+            }
+            let start = entry.offset as usize;
+            let end = start + entry.byte_len as usize;
+            if end <= mmap.len() && binary_search_bucket(&mmap[start..end], sub_len, sub_bytes) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Dynamically tracks new target domains in-memory and appends to user list file.
+    pub fn auto_add_domain(&self, domain: &str) {
+        let Some(domain) = clean_domain_name(domain) else {
+            return;
+        };
+        if self.domain_persisted(&domain) {
+            return;
+        }
+        {
+            let mut auto = self.auto_added_domains.write();
+            if auto.contains(&domain) {
                 return;
             }
-            auto.insert(domain.to_string());
+            auto.insert(domain.clone());
         }
 
         let user_path = self.lists_dir.join("list-general-user.txt");
         if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(user_path) {
             let _ = writeln!(file, "{domain}");
             println!("[SmartRouter] Domain {domain} dynamically registered for acceleration");
-            let _ = RELOAD_NOTIFY.send(());
+            if RELOAD_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = RELOAD_NOTIFY.send(());
+            }
         }
     }
 
@@ -1553,7 +1713,8 @@ mod tests {
         // Lookups
         assert_eq!(router.should_route("cool"), (true, "database_routed"));
         assert_eq!(router.should_route("game"), (true, "database_routed"));
-        assert_eq!(router.should_route("sub.app"), (true, "database_routed"));
+        assert_eq!(router.should_route("sub.app"), (false, "default_direct"));
+        assert_eq!(router.should_route("app"), (true, "database_routed"));
         assert_eq!(router.should_route("twitch.tv"), (true, "target_routed"));
         assert_eq!(router.should_route("static-cdn.jtvnw.net"), (true, "target_routed"));
         assert_eq!(router.should_route("static.twitchcdn.net"), (true, "target_routed"));
