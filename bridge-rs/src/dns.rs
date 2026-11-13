@@ -325,17 +325,37 @@ pub async fn resolve_candidate_ips(hostname: &str) -> Vec<IpAddr> {
         }
     }
 
-    // 2. Query direct public DNS resolvers over TCP (1.1.1.1, 8.8.8.8) to bypass ISP UDP 53 interception
-    for pub_dns in &["1.1.1.1", "8.8.8.8"] {
-        if let Some(ips) = query_dns_tcp(pub_dns, hostname).await {
-            for ip4 in ips {
-                let ip = IpAddr::V4(ip4);
+    // Prioritize system DNS for YouTube / GoogleVideo CDN to preserve local ISP GGC cache nodes
+    let is_google_streaming = hostname.contains("googlevideo")
+        || hostname.contains("youtube")
+        || hostname.contains("ytimg")
+        || hostname.contains("ggpht");
+
+    if is_google_streaming {
+        let addr_str = format!("{hostname}:443");
+        if let Ok(Ok(addrs)) = timeout(Duration::from_millis(1500), tokio::net::lookup_host(addr_str)).await {
+            for sa in addrs {
+                let ip = sa.ip();
                 if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
                     candidates.push(ip);
                 }
             }
-            if !candidates.is_empty() {
-                break;
+        }
+    }
+
+    // 2. Query direct public DNS resolvers over TCP (1.1.1.1, 8.8.8.8) for filtered / unpoisoned CDNs
+    if candidates.is_empty() {
+        for pub_dns in &["1.1.1.1", "8.8.8.8"] {
+            if let Some(ips) = query_dns_tcp(pub_dns, hostname).await {
+                for ip4 in ips {
+                    let ip = IpAddr::V4(ip4);
+                    if is_valid_candidate_ip(ip) && !candidates.contains(&ip) {
+                        candidates.push(ip);
+                    }
+                }
+                if !candidates.is_empty() {
+                    break;
+                }
             }
         }
     }

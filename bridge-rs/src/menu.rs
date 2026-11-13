@@ -1559,16 +1559,14 @@ pub fn cmd_optimize_browsers() -> usize {
         }
         #[cfg(windows)]
         {
-            // Configure DoH and Post-Quantum TLS policies
+            // Configure Post-Quantum TLS policy (disables Kyber to allow TLS ClientHello desynchronization)
             let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"PostQuantumKeyAgreementEnabled\" /t REG_DWORD /d 0 /f"]).output();
             let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"PostQuantumKeyAgreementEnabled\" /t REG_DWORD /d 0 /f"]).output();
-            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"DnsOverHttpsMode\" /t REG_SZ /d \"secure\" /f"]).output();
-            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"DnsOverHttpsTemplates\" /t REG_SZ /d \"https://chrome.cloudflare-dns.com/dns-query https://dns.google/dns-query\" /f"]).output();
-            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"DnsOverHttpsMode\" /t REG_SZ /d \"secure\" /f"]).output();
-            let _ = Command::new("cmd").args(["/c", "reg add \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"DnsOverHttpsTemplates\" /t REG_SZ /d \"https://chrome.cloudflare-dns.com/dns-query https://dns.google/dns-query\" /f"]).output();
-            let _ = Command::new("cmd").args(["/c", "netsh interface ipv4 set dns name=\"Ethernet\" static 1.1.1.1"]).output();
-            let _ = Command::new("cmd").args(["/c", "netsh interface ipv4 add dns name=\"Ethernet\" 8.8.8.8 index=2"]).output();
-            println!("  [+] Политики безопасного DoH и быстрый сетевой DNS (1.1.1.1 / 8.8.8.8) успешно применены!");
+            // Remove DoH policies to preserve local ISP CDN caching for YouTube / GoogleVideo
+            let _ = Command::new("cmd").args(["/c", "reg delete \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"DnsOverHttpsMode\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg delete \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\" /v \"DnsOverHttpsTemplates\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg delete \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"DnsOverHttpsMode\" /f"]).output();
+            let _ = Command::new("cmd").args(["/c", "reg delete \"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\" /v \"DnsOverHttpsTemplates\" /f"]).output();
         }
     }
     println!("  --------------------------------------------------\n");
