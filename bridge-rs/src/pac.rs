@@ -93,7 +93,8 @@ fn render_pac(host: &str, port: u16, target_object: &str, exclude_object: &str) 
     if (bridgePrivate(h)) return "DIRECT";
     if (bridgeListed(h, BRIDGE_DIRECT_SUFFIXES) || bridgeObj(h, BRIDGE_FILE_EXCLUDES)) return "DIRECT";
     if (bridgeListed(h, BRIDGE_PROXY_SUFFIXES) || bridgeObj(h, BRIDGE_FILE_TARGETS)) return proxy;
-    return "DIRECT";
+    if (h.indexOf("animevost") >= 0 || h.indexOf("anilibria") >= 0 || h.indexOf("animedia") >= 0 || h.indexOf("jut.su") >= 0 || h.indexOf("animego") >= 0 || h.indexOf("rezka") >= 0) return proxy;
+    return proxy;
 }}
 function bridgePlain(h) {{ return h.indexOf(".") < 0 && h.indexOf(":") < 0; }}
 function bridgeEnds(h, suf) {{ return h.length >= suf.length && h.substring(h.length - suf.length) === suf; }}

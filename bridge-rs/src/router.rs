@@ -603,6 +603,20 @@ pub const PROXY_SUFFIXES: &[&str] = &[
     "hembed.com",
     "moeli-desu.com",
     "daradara.me",
+    "animevost.org",
+    "animevost.tv",
+    "animevost.top",
+    "animevost.me",
+    "anilibria.tv",
+    "anilibria.top",
+    "animedia.tv",
+    "jut.su",
+    "animego.org",
+    "animego.me",
+    "hdrezka.me",
+    "rezka.ag",
+    "lostfilm.tv",
+    "kinozal.tv",
 ];
 
 /// Domains that stay off the bridge even if a broader list contains them.
