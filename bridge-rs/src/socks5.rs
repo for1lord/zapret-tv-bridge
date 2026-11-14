@@ -501,7 +501,13 @@ pub async fn run_socks5_listener(
     println!("[SOCKS5] Dedicated listener active on {}", addr);
 
     loop {
-        let (stream, _peer_addr) = listener.accept().await?;
+        let (stream, _peer_addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(_) => {
+                metrics.inc_errors();
+                continue;
+            }
+        };
         let router_cloned = router.clone();
         let metrics_cloned = metrics.clone();
 

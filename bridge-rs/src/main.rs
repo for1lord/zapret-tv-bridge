@@ -106,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_foreground = args.iter().any(|a| a == "--server" || a == "--foreground");
     let explicit_menu = args.iter().any(|a| a == "--menu");
 
-    if explicit_menu || (!is_daemon && !is_foreground && args.len() <= 1 && is_stdin_terminal()) {
+    if explicit_menu || (!is_daemon && !is_foreground && args.len() <= 1) {
         menu::ensure_admin(&["--menu".to_string()]);
         menu::run_interactive_menu(&base_dir);
         return Ok(());
@@ -614,7 +614,17 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     };
     let prefer_python = engine == TgEngine::Python;
 
-    let mut _tg_handle = if let Some(exe_path) = standalone_tg_exe.filter(|_| prefer_exe) {
+    let port_already_in_use = std::net::TcpListener::bind(format!("0.0.0.0:{}", tg_port)).is_err();
+
+    let mut _tg_handle = if port_already_in_use {
+        if !is_daemon {
+            println!(
+                "[*] Telegram WS Proxy уже активен на 0.0.0.0:{}",
+                tg_port
+            );
+        }
+        tokio::spawn(async { Ok::<(), std::io::Error>(()) })
+    } else if let Some(exe_path) = standalone_tg_exe.filter(|_| prefer_exe) {
         stop_recorded_tg_pid(&base_dir);
 
         let mut cmd = std::process::Command::new(&exe_path);
@@ -844,11 +854,11 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     if is_daemon {
         tokio::select! {
             res = &mut _http_handle => {
-                let _ = res;
+                eprintln!("[Daemon Exit] HTTP proxy listener stopped with: {res:?}");
                 return Err("HTTP proxy listener stopped".into());
             }
             res = &mut _socks5_handle => {
-                let _ = res;
+                eprintln!("[Daemon Exit] SOCKS5 listener stopped with: {res:?}");
                 return Err("SOCKS5 listener stopped".into());
             }
             _ = std::future::pending::<()>() => {}

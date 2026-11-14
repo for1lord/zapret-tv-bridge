@@ -70,3 +70,8 @@ release-assets.githubusercontent.com
 raw.githubusercontent.com
 
 
+
+animevost.org
+animevost.tv
+animevost.top
+animevost.me
