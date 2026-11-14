@@ -523,6 +523,14 @@ fn render_dashboard_html(
     uptime_secs: u64,
     metrics: &MetricsSnapshot,
 ) -> String {
+    let clean_tg_secret = if tg_secret.starts_with("dd") || tg_secret.starts_with("ee") {
+        tg_secret.to_string()
+    } else if tg_secret.len() == 32 && tg_secret.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("dd{}", tg_secret)
+    } else {
+        tg_secret.to_string()
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html lang="ru">
@@ -770,12 +778,12 @@ function copyText(val, btn) {{
       <div class="section-title">3. Telegram MTProto Proxy (1 клик)</div>
       <p class="info-text">Стабильное прямое подключение Telegram без задержек (поддерживает любые аккаунты):</p>
       <div class="btn-group">
-        <a class="btn btn-tg" href="tg://proxy?server={ip}&port={tg_port}&secret=dd{tg_secret}">Подключить в Telegram</a>
-        <a class="btn" style="background: #334155; color: #fff;" href="https://t.me/proxy?server={ip}&port={tg_port}&secret=dd{tg_secret}" target="_blank">Ссылка t.me</a>
+        <a class="btn btn-tg" href="tg://proxy?server={ip}&port={tg_port}&secret={tg_secret}">Подключить в Telegram</a>
+        <a class="btn" style="background: #334155; color: #fff;" href="https://t.me/proxy?server={ip}&port={tg_port}&secret={tg_secret}" target="_blank">Ссылка t.me</a>
       </div>
       <div class="val-row" style="margin-top: 10px;">
-        <span>Секрет: <code>dd{tg_secret}</code></span>
-        <button class="copy-btn" onclick="copyText('dd{tg_secret}', this)">Копировать</button>
+        <span>Секрет: <code>{tg_secret}</code></span>
+        <button class="copy-btn" onclick="copyText('{tg_secret}', this)">Копировать</button>
       </div>
     </div>
 
@@ -813,7 +821,7 @@ function copyText(val, btn) {{
         ip = ip,
         proxy_port = proxy_port,
         tg_port = tg_port,
-        tg_secret = tg_secret,
+        tg_secret = clean_tg_secret,
         uptime = uptime_secs,
         active_conn = metrics.active_connections,
         total_conn = metrics.total_connections,

@@ -636,12 +636,17 @@ pub fn parse_host_port(target: &str, default_port: u16) -> (String, u16) {
     }
 }
 
-/// Configures socket options: TCP_NODELAY and 128 KB receive/send buffers.
+/// Configures socket options: TCP_NODELAY, TCP keepalive, and 512 KB receive/send buffers.
 pub fn tune_socket(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
     let sock = socket2::SockRef::from(stream);
     let _ = sock.set_recv_buffer_size(SOCKET_BUF_SIZE);
     let _ = sock.set_send_buffer_size(SOCKET_BUF_SIZE);
+
+    let mut keepalive = socket2::TcpKeepalive::new();
+    keepalive = keepalive.with_time(Duration::from_secs(30));
+    keepalive = keepalive.with_interval(Duration::from_secs(10));
+    let _ = sock.set_tcp_keepalive(&keepalive);
 }
 
 #[cfg(test)]

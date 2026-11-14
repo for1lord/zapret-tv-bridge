@@ -333,7 +333,11 @@ fn push_candidate(
     confirm_before_cache: bool,
     allow_local: bool,
 ) {
-    if !upstream_allowed(ip, allow_local) || out.iter().any(|c| c.ip == ip) {
+    if !is_valid_candidate_ip(ip) || !upstream_allowed(ip, allow_local) || out.iter().any(|c| c.ip == ip) {
+        return;
+    }
+    // Filter IPv6 candidates when host has no working IPv6 route
+    if ip.is_ipv6() {
         return;
     }
     out.push(Candidate {
@@ -358,24 +362,42 @@ async fn lookup_system(hostname: &str, allow_local: bool, out: &mut Vec<Candidat
 }
 
 async fn lookup_public(hostname: &str, allow_local: bool, out: &mut Vec<Candidate>) {
-    for pub_dns in &["1.1.1.1", "8.8.8.8"] {
-        if let Some(ips) = query_dns_tcp(pub_dns, hostname).await {
-            for ip4 in ips {
-                push_candidate(out, IpAddr::V4(ip4), false, allow_local);
-            }
-            if out.iter().any(|c| !c.confirm_before_cache) {
-                return;
-            }
+    let (res_cf, res_goog) = tokio::join!(
+        query_dns_tcp("1.1.1.1", hostname),
+        query_dns_tcp("8.8.8.8", hostname)
+    );
+
+    let mut found = false;
+    if let Some(ips) = res_cf {
+        for ip4 in ips {
+            push_candidate(out, IpAddr::V4(ip4), false, allow_local);
+            found = true;
         }
     }
-    for pub_dns in &["1.1.1.1", "8.8.8.8"] {
-        if let Some(ips) = query_dns_udp(pub_dns, hostname).await {
-            for ip4 in ips {
-                push_candidate(out, IpAddr::V4(ip4), false, allow_local);
-            }
-            if out.iter().any(|c| !c.confirm_before_cache) {
-                return;
-            }
+    if let Some(ips) = res_goog {
+        for ip4 in ips {
+            push_candidate(out, IpAddr::V4(ip4), false, allow_local);
+            found = true;
+        }
+    }
+
+    if found {
+        return;
+    }
+
+    let (res_cf_udp, res_goog_udp) = tokio::join!(
+        query_dns_udp("1.1.1.1", hostname),
+        query_dns_udp("8.8.8.8", hostname)
+    );
+
+    if let Some(ips) = res_cf_udp {
+        for ip4 in ips {
+            push_candidate(out, IpAddr::V4(ip4), false, allow_local);
+        }
+    }
+    if let Some(ips) = res_goog_udp {
+        for ip4 in ips {
+            push_candidate(out, IpAddr::V4(ip4), false, allow_local);
         }
     }
 }
@@ -432,12 +454,17 @@ fn select_candidates(mut public: Vec<Candidate>, system: Vec<Candidate>) -> Vec<
 
 pub const SOCKET_BUF_SIZE: usize = 128 * 1024; // 128 KB OS socket buffer
 
-/// Configures socket options: TCP_NODELAY and 128 KB receive/send buffers.
+/// Configures socket options: TCP_NODELAY, keepalive, and 128 KB receive/send buffers.
 pub fn tune_socket(stream: &TcpStream) {
     let _ = stream.set_nodelay(true);
     let sock = socket2::SockRef::from(stream);
     let _ = sock.set_recv_buffer_size(SOCKET_BUF_SIZE);
     let _ = sock.set_send_buffer_size(SOCKET_BUF_SIZE);
+
+    let mut keepalive = socket2::TcpKeepalive::new();
+    keepalive = keepalive.with_time(Duration::from_secs(30));
+    keepalive = keepalive.with_interval(Duration::from_secs(10));
+    let _ = sock.set_tcp_keepalive(&keepalive);
 }
 
 async fn connect_one(ip: IpAddr, port: u16) -> Option<TcpStream> {
@@ -501,8 +528,8 @@ pub async fn connect_to_remote(hostname: &str, port: u16, allow_local: bool) -> 
 }
 
 pub fn remember_confirmed_ip(hostname: &str, ip: IpAddr) {
-    if upstream_allowed(ip, false) {
-        GLOBAL_DNS_CACHE.insert_with_ttl(hostname, ip, Duration::from_secs(45));
+    if upstream_allowed(ip, false) && is_valid_candidate_ip(ip) && !ip.is_ipv6() {
+        GLOBAL_DNS_CACHE.insert_with_ttl(hostname, ip, Duration::from_secs(300));
     }
 }
 

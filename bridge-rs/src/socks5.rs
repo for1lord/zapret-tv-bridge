@@ -70,6 +70,11 @@ pub fn tune_socket(stream: &TcpStream) {
     let sock = socket2::SockRef::from(stream);
     let _ = sock.set_recv_buffer_size(SOCKET_BUF_SIZE);
     let _ = sock.set_send_buffer_size(SOCKET_BUF_SIZE);
+
+    let mut keepalive = socket2::TcpKeepalive::new();
+    keepalive = keepalive.with_time(Duration::from_secs(30));
+    keepalive = keepalive.with_interval(Duration::from_secs(10));
+    let _ = sock.set_tcp_keepalive(&keepalive);
 }
 
 /// Negotiates SOCKS5 authentication method (RFC 1928 Section 3).
