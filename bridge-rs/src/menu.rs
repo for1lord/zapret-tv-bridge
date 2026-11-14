@@ -1306,6 +1306,8 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
          If Not fso.FolderExists(curDir) Then WScript.Quit\r\n\
          shell.CurrentDirectory = curDir\r\n\
          On Error Resume Next\r\n\
+         shell.Run \"cmd.exe /c reg add \"\"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge\"\" /v \"\"PostQuantumKeyAgreementEnabled\"\" /t REG_DWORD /d 0 /f\", 0, True\r\n\
+         shell.Run \"cmd.exe /c reg add \"\"HKLM\\SOFTWARE\\Policies\\Google\\Chrome\"\" /v \"\"PostQuantumKeyAgreementEnabled\"\" /t REG_DWORD /d 0 /f\", 0, True\r\n\
          shell.Run \"cmd.exe /c sc start zapret\", 0, False\r\n\
          shell.Run \"netsh advfirewall firewall add rule name=\"\"Zapret TV Bridge - Block QUIC (UDP 443)\"\" dir=out action=block protocol=UDP remoteport=443\", 0, False\r\n\
          Set objWMIService = GetObject(\"winmgmts:\\\\.\\root\\cimv2\")\r\n\

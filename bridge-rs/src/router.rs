@@ -514,13 +514,8 @@ fn restart_zapret_service() {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let _ = std::process::Command::new("sc")
-            .args(["stop", "zapret"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
-        std::thread::sleep(std::time::Duration::from_millis(800));
-        let _ = std::process::Command::new("sc")
-            .args(["start", "zapret"])
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "net stop zapret /y && net start zapret"])
             .creation_flags(CREATE_NO_WINDOW)
             .output();
     }

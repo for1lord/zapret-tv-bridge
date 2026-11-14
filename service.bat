@@ -324,8 +324,8 @@ if "!USE_STANDALONE!"=="1" (
     "%BRIDGE_EXE%" --parse-rules
 ) else (
     python.exe "%PROJECT_DIR%parse_rules.py"
-    sc stop zapret >nul 2>&1
-    sc start zapret >nul 2>&1
+    net stop zapret /y >nul 2>&1
+    net start zapret >nul 2>&1
 )
 if defined CLI_CMD exit /b
 echo.
