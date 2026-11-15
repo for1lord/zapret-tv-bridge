@@ -316,7 +316,10 @@ async fn pac_handler(State(state): State<Arc<WebState>>, req: Request) -> Respon
         .into_response()
 }
 
-async fn mobileconfig_supercell_handler(State(state): State<Arc<WebState>>) -> Response {
+async fn mobileconfig_supercell_handler(
+    State(state): State<Arc<WebState>>,
+    req: Request,
+) -> Response {
     let disk_path = state.config.base_dir.join("supercell.mobileconfig");
     let content = if disk_path.exists() {
         tokio::fs::read_to_string(&disk_path)
@@ -326,32 +329,17 @@ async fn mobileconfig_supercell_handler(State(state): State<Arc<WebState>>) -> R
         DEFAULT_SUPERCELL_MOBILECONFIG.to_string()
     };
 
-    let cl = content.len().to_string();
-    (
-        [
-            (
-                "Content-Type",
-                "application/x-apple-aspen-config; charset=utf-8",
-            ),
-            (
-                "Content-Disposition",
-                "attachment; filename=\"Supercell_Gaming_COMSS.mobileconfig\"",
-            ),
-            ("Content-Length", cl.as_str()),
-        ],
-        content,
-    )
-        .into_response()
-}
+    let is_ios = req
+        .headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|ua| ua.contains("iPhone") || ua.contains("iPad") || ua.contains("Mobile"))
+        .unwrap_or(false);
 
-async fn mobileconfig_nulls_handler(State(state): State<Arc<WebState>>) -> Response {
-    let disk_path = state.config.base_dir.join("nullsproxy.mobileconfig");
-    let content = if disk_path.exists() {
-        tokio::fs::read_to_string(&disk_path)
-            .await
-            .unwrap_or_else(|_| DEFAULT_NULLS_MOBILECONFIG.to_string())
+    let disposition = if is_ios {
+        "inline; filename=\"Supercell_Gaming_COMSS.mobileconfig\""
     } else {
-        DEFAULT_NULLS_MOBILECONFIG.to_string()
+        "attachment; filename=\"Supercell_Gaming_COMSS.mobileconfig\""
     };
 
     let cl = content.len().to_string();
@@ -361,10 +349,50 @@ async fn mobileconfig_nulls_handler(State(state): State<Arc<WebState>>) -> Respo
                 "Content-Type",
                 "application/x-apple-aspen-config; charset=utf-8",
             ),
+            ("Content-Disposition", disposition),
+            ("Cache-Control", "no-cache, no-store, must-revalidate"),
+            ("Content-Length", cl.as_str()),
+        ],
+        content,
+    )
+        .into_response()
+}
+
+async fn mobileconfig_nulls_handler(
+    State(state): State<Arc<WebState>>,
+    req: Request,
+) -> Response {
+    let disk_path = state.config.base_dir.join("nullsproxy.mobileconfig");
+    let content = if disk_path.exists() {
+        tokio::fs::read_to_string(&disk_path)
+            .await
+            .unwrap_or_else(|_| DEFAULT_NULLS_MOBILECONFIG.to_string())
+    } else {
+        DEFAULT_NULLS_MOBILECONFIG.to_string()
+    };
+
+    let is_ios = req
+        .headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|ua| ua.contains("iPhone") || ua.contains("iPad") || ua.contains("Mobile"))
+        .unwrap_or(false);
+
+    let disposition = if is_ios {
+        "inline; filename=\"NullsProxy_Gaming.mobileconfig\""
+    } else {
+        "attachment; filename=\"NullsProxy_Gaming.mobileconfig\""
+    };
+
+    let cl = content.len().to_string();
+    (
+        [
             (
-                "Content-Disposition",
-                "attachment; filename=\"NullsProxy_Gaming.mobileconfig\"",
+                "Content-Type",
+                "application/x-apple-aspen-config; charset=utf-8",
             ),
+            ("Content-Disposition", disposition),
+            ("Cache-Control", "no-cache, no-store, must-revalidate"),
             ("Content-Length", cl.as_str()),
         ],
         content,
@@ -729,12 +757,40 @@ function copyText(val, btn) {{
   navigator.clipboard.writeText(val).then(() => {{
     const old = btn.innerText;
     btn.innerText = "Скопировано!";
-    setTimeout(() => {{ btn.innerText = old; }}, 1500);
+    setTimeout(() => {{ btn.innerText = old; }}, 1800);
   }}).catch(() => {{
-    const old = btn.innerText;
-    btn.innerText = "Скопировано!";
-    setTimeout(() => {{ btn.innerText = old; }}, 1500);
+    prompt("Скопируйте вручную:", val);
   }});
+}}
+
+function handleTgClick(e, tgUrl, host, port, secret) {{
+  window.location.href = tgUrl;
+  navigator.clipboard.writeText(tgUrl).then(() => {{
+    const toast = document.getElementById("tg-toast");
+    if (toast) {{
+      toast.style.display = "block";
+      setTimeout(() => {{ toast.style.display = "none"; }}, 6000);
+    }}
+  }}).catch(() => {{}});
+  return true;
+}}
+
+function handleProfileClick(e, path, profileName) {{
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isNonSafariIOS = isIOS && (/EdgiOS|CriOS|FxiOS|DuckDuckGo/i.test(ua) || !/Version\/.*Safari/i.test(ua));
+
+  if (isNonSafariIOS) {{
+    e.preventDefault();
+    const fullUrl = window.location.origin + path;
+    navigator.clipboard.writeText(fullUrl).then(() => {{
+      alert("⚠️ На iPhone установка DNS-профилей блокируется Apple в сторонних браузерах (Edge, Chrome) и разрешена ТОЛЬКО в Safari!\n\nПрямая ссылка скопирована в буфер:\n" + fullUrl + "\n\nИнструкция:\n1. Откройте приложение Safari на iPhone.\n2. Вставьте скопированную ссылку в адресную строку Safari и перейдите.\n3. Safari спросит «Разрешить загрузку профиля?» -> нажмите «Разрешить».\n4. Перейдите в «Настройки iPhone -> Профиль загружен -> Установить».");
+    }}).catch(() => {{
+      alert("⚠️ На iPhone профили (.mobileconfig) устанавливаются ТОЛЬКО через Safari!\n\nПожалуйста, откройте Safari и перейдите по адресу:\n" + window.location.origin + path);
+    }});
+    return false;
+  }}
+  return true;
 }}
 </script>
 </head>
@@ -778,10 +834,17 @@ function copyText(val, btn) {{
       <div class="section-title">3. Telegram MTProto Proxy (1 клик)</div>
       <p class="info-text">Стабильное прямое подключение Telegram без задержек (поддерживает любые аккаунты):</p>
       <div class="btn-group">
-        <a class="btn btn-tg" href="tg://proxy?server={ip}&port={tg_port}&secret={tg_secret}">Подключить в Telegram</a>
-        <a class="btn" style="background: #334155; color: #fff;" href="https://t.me/proxy?server={ip}&port={tg_port}&secret={tg_secret}" target="_blank">Ссылка t.me</a>
+        <a class="btn btn-tg" href="tg://proxy?server={ip}&port={tg_port}&secret={tg_secret}" onclick="handleTgClick(event, 'tg://proxy?server={ip}&port={tg_port}&secret={tg_secret}', '{ip}', '{tg_port}', '{tg_secret}')">⚡ Подключить в Telegram</a>
+        <button class="btn" style="background: #1e293b; border: 1px solid var(--border); color: #fff;" onclick="copyText('tg://proxy?server={ip}&port={tg_port}&secret={tg_secret}', this)">📋 Скопировать ссылку tg://</button>
+      </div>
+      <div id="tg-toast" style="display:none; margin-top: 8px; font-size: 13px; color: var(--accent); background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 6px;">
+        ✓ Ссылка скопирована! Если Telegram не открылся автоматически, вставьте её в диалог «Избранное» (Saved Messages) в Telegram и нажмите на неё.
       </div>
       <div class="val-row" style="margin-top: 10px;">
+        <span>Сервер: <code>{ip}</code> &bull; Порт: <code>{tg_port}</code></span>
+        <button class="copy-btn" onclick="copyText('{ip}:{tg_port}', this)">Копировать</button>
+      </div>
+      <div class="val-row" style="margin-top: 6px;">
         <span>Секрет: <code>{tg_secret}</code></span>
         <button class="copy-btn" onclick="copyText('{tg_secret}', this)">Копировать</button>
       </div>
@@ -792,11 +855,23 @@ function copyText(val, btn) {{
       <div class="section-title">4. Brawl Stars & Clash Royale (DNS-профиль)</div>
       <p class="info-text">Для прямого подключения игр Supercell на iOS скачайте игровой DNS-профиль:</p>
       <div class="btn-group">
-        <a class="btn" href="/supercell.mobileconfig">📥 Профиль COMSS (Рекомендуется: DoH)</a>
-        <a class="btn" href="/nullsproxy.mobileconfig" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); color: #fff;">📥 Null's Proxy (DoT)</a>
+        <a class="btn" href="/supercell.mobileconfig" onclick="return handleProfileClick(event, '/supercell.mobileconfig', 'COMSS')">📥 Профиль COMSS (Рекомендуется: DoH)</a>
+        <a class="btn" href="/nullsproxy.mobileconfig" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); color: #fff;" onclick="return handleProfileClick(event, '/nullsproxy.mobileconfig', 'Nulls')">📥 Null's Proxy (DoT)</a>
+      </div>
+      <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+        ⚠️ <strong>Важно для iPhone:</strong> Apple разрешает загрузку профилей <strong>только через Safari</strong>.<br>
+        Если вы открыли сайт в Edge или Chrome — скопируйте ссылку ниже и откройте её в <strong>Safari</strong>:
+      </div>
+      <div class="val-row" style="margin-top: 6px;">
+        <span>COMSS: <code>/supercell.mobileconfig</code></span>
+        <button class="copy-btn" onclick="copyText('http://{ip}:{proxy_port}/supercell.mobileconfig', this)">Копировать для Safari</button>
+      </div>
+      <div class="val-row" style="margin-top: 6px;">
+        <span>Null's: <code>/nullsproxy.mobileconfig</code></span>
+        <button class="copy-btn" onclick="copyText('http://{ip}:{proxy_port}/nullsproxy.mobileconfig', this)">Копировать для Safari</button>
       </div>
       <p class="info-text" style="font-size: 12px; margin-top: 8px;">
-        После загрузки в Safari: <em>Настройки -&gt; Профиль загружен -&gt; Установить</em>.
+        После открытия ссылки в Safari: <em>Разрешить -&gt; Настройки iPhone -&gt; Профиль загружен -&gt; Установить</em>.
       </p>
     </div>
 
