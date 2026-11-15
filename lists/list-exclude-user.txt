@@ -8,3 +8,10 @@ chatgpt.com
 openai.com
 anthropic.com
 claude.ai
+
+# GitHub full-speed direct exclusion
+github.com
+github.io
+githubassets.com
+githubusercontent.com
+

@@ -60,14 +60,6 @@ ext-twitch.tv
 live-video.net
 
 # Developer & Release Asset Delivery CDN
-github.com
-api.github.com
-github.githubassets.com
-githubassets.com
-githubusercontent.com
-objects.githubusercontent.com
-release-assets.githubusercontent.com
-raw.githubusercontent.com
 
 
 
@@ -75,3 +67,5 @@ animevost.org
 animevost.tv
 animevost.top
 animevost.me
+
+rdtcdn.com

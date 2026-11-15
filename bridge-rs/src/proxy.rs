@@ -111,6 +111,7 @@ pub async fn handle_inbound_stream_with_web(
     }
 
     let first_byte = peek_buf[0];
+    eprintln!("[Proxy] Inbound stream from {peer_addr}: first byte 0x{first_byte:02X} ('{}')", if first_byte.is_ascii_graphic() { first_byte as char } else { '.' });
     if first_byte == socks5::SOCKS_VERSION {
         // Dispatch to SOCKS5 engine (tracks its own connection guard)
         socks5::handle_socks5_stream(stream, router, metrics).await
@@ -118,6 +119,7 @@ pub async fn handle_inbound_stream_with_web(
         // Dispatch to HTTP engine (tracks its own connection guard)
         handle_http_stream_with_web(stream, peer_addr, router, metrics, web_router).await
     } else {
+        eprintln!("[Proxy] Inbound connection from {peer_addr}: unsupported protocol leading byte 0x{first_byte:02X}");
         metrics.inc_errors();
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -183,6 +185,7 @@ pub async fn handle_http_stream_with_web(
 
                 // Reject invalid or unsupported HTTP version (only HTTP/1.0 and HTTP/1.1 allowed)
                 if req.version != Some(1) && req.version != Some(0) {
+                    eprintln!("[Proxy] HTTP unsupported version {:?} from {_peer_addr}", req.version);
                     let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
                     let _ = client.flush().await;
                     metrics.inc_errors();
@@ -203,10 +206,12 @@ pub async fn handle_http_stream_with_web(
                         }
                     }
                 }
+                eprintln!("[Proxy] HTTP request from {_peer_addr}: {method} {target} (path: {path}, is_connect={is_connect})");
                 break (offset, is_connect, target, path, method);
             }
             Ok(httparse::Status::Partial) => {
                 if header_buf.len() >= MAX_HEADER_SIZE {
+                    eprintln!("[Proxy] HTTP header size exceeded from {_peer_addr} ({} bytes)", header_buf.len());
                     let _ = client
                         .write_all(b"HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                         .await;
@@ -229,6 +234,7 @@ pub async fn handle_http_stream_with_web(
                 continue;
             }
             Err(e) => {
+                eprintln!("[Proxy] HTTP parse error from {_peer_addr}: {e}");
                 let _ = client.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
                 let _ = client.flush().await;
                 metrics.inc_errors();
@@ -289,6 +295,9 @@ pub async fn handle_http_connect(
         }
     };
 
+    let peer = client.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
+    println!("[Proxy] CONNECT {target} from {peer}");
+
     let (should_route, reason) = router.should_route(&host);
     if should_route {
         router.observe_domain(&host, reason);
@@ -298,6 +307,7 @@ pub async fn handle_http_connect(
         .map(|addr| addr.ip().is_loopback())
         .unwrap_or(false);
     if let Some(blocked) = blocked_literal(&host, allow_local) {
+        eprintln!("[Proxy] CONNECT {target} blocked: upstream is private/local");
         let _ = client
             .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .await;
@@ -308,8 +318,12 @@ pub async fn handle_http_connect(
     // Fast failover connection via DNS candidate cache or direct lookup
     let remote_conn = connect_upstream(&host, port, allow_local).await;
     let (mut remote, remote_ip, confirm_cache) = match remote_conn {
-        Some(conn) => (conn.stream, conn.ip, conn.confirm_cache),
+        Some(conn) => {
+            println!("[Proxy] CONNECT {target} -> connected to upstream {}:{}", conn.ip, port);
+            (conn.stream, conn.ip, conn.confirm_cache)
+        }
         None => {
+            eprintln!("[Proxy] CONNECT {target} -> FAILED to connect upstream");
             metrics.inc_errors();
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
             let _ = client.flush().await;
@@ -353,6 +367,7 @@ pub async fn handle_http_connect(
 
     match relay_res {
         Ok((up, down)) => {
+            println!("[Proxy] CONNECT {target} finished: up {up} B, down {down} B");
             metrics.add_bytes_up(up);
             metrics.add_bytes_down(down);
             if confirm_cache && down > 0 {
@@ -361,6 +376,7 @@ pub async fn handle_http_connect(
             Ok(())
         }
         Err(e) => {
+            eprintln!("[Proxy] CONNECT {target} relay ended: {e}");
             if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
             {
                 metrics.inc_errors();
@@ -379,6 +395,8 @@ pub async fn handle_plain_http(
     metrics: Arc<ProxyMetrics>,
 ) -> io::Result<()> {
     let (host, port) = parse_host_port(target, 80);
+    let peer = client.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
+    eprintln!("[Proxy] HTTP-PLAIN {target} from {peer}");
     let (should_route, reason) = router.should_route(&host);
     if should_route {
         router.observe_domain(&host, reason);
@@ -428,6 +446,7 @@ pub async fn handle_plain_http(
 
     match relay_res {
         Ok((up, down)) => {
+            println!("[Proxy] CONNECT {target} finished: up {up} B, down {down} B");
             metrics.add_bytes_up(up);
             metrics.add_bytes_down(down);
             if confirm_cache && down > 0 {
@@ -436,6 +455,7 @@ pub async fn handle_plain_http(
             Ok(())
         }
         Err(e) => {
+            eprintln!("[Proxy] CONNECT {target} relay ended: {e}");
             if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
             {
                 metrics.inc_errors();

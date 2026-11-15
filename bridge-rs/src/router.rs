@@ -591,6 +591,7 @@ pub const PROXY_SUFFIXES: &[&str] = &[
     "ypncdn.com",
     "redtube.com",
     "redtubecdn.com",
+    "rdtcdn.com",
     "eporner.com",
     "tube8.com",
     "spankwire.com",
@@ -654,6 +655,10 @@ pub const DIRECT_SUFFIXES: &[&str] = &[
     "wildberries.ru",
     "tinkoff.ru",
     "mail.ru",
+    "github.com",
+    "github.io",
+    "githubassets.com",
+    "githubusercontent.com",
 ];
 
 /// A label with no dot matches only the full host, so a database entry `ua` does not capture every `.ua` name.

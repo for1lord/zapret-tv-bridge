@@ -144,6 +144,14 @@ pub fn is_valid_candidate_ip(ip: IpAddr) -> bool {
             if v4 == std::net::Ipv4Addr::new(94, 190, 64, 51)
                 || v4 == std::net::Ipv4Addr::new(151, 101, 195, 6)
                 || v4 == std::net::Ipv4Addr::new(129, 134, 30, 12)
+                || v4 == std::net::Ipv4Addr::new(66, 254, 114, 41)
+                || v4 == std::net::Ipv4Addr::new(66, 254, 114, 42)
+                || v4 == std::net::Ipv4Addr::new(66, 254, 122, 21)
+                || v4 == std::net::Ipv4Addr::new(212, 102, 62, 43)
+                || v4 == std::net::Ipv4Addr::new(146, 75, 119, 52)
+                || (octets[0] == 212 && octets[1] == 188)
+                || (octets[0] == 121 && octets[1] == 127 && octets[2] == 45)
+                || (octets[0] == 37 && octets[1] == 19 && octets[2] == 202)
             {
                 return false;
             }
@@ -427,6 +435,44 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         push_candidate(&mut candidates, cached_ip, false, allow_local);
     }
 
+    let host_lower = hostname.to_ascii_lowercase();
+    if host_lower == "rt.pornhub.org"
+        || host_lower == "pornhub.com"
+        || host_lower == "www.pornhub.com"
+        || host_lower == "rt.pornhub.com"
+        || host_lower == "pornhubpremium.com"
+        || host_lower == "rt.pornhubpremium.com"
+    {
+        // 66.254.114.40 is the verified, 100% responsive Anycast node returning 200 OK (.41 is dropped, .42 is 404/403 openresty, .39 is tube8)
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 114, 40)), false, allow_local);
+    } else if host_lower.contains("hembed.com") {
+        // High-speed verified CDN77 Anycast nodes serving hanime1.me media (bypassing blackholed 37.19.202.x)
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 5)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 6)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(195, 181, 172, 5)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(37, 19, 218, 101)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(37, 19, 218, 102)), false, allow_local);
+    } else if host_lower == "ei.phncdn.com" || host_lower == "es.phncdn.com" || host_lower == "ei-ph.rdtcdn.com" {
+        // Verified Anycast nodes (.21 drops TLS handshake)
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 122, 18)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 122, 17)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 122, 16)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 122, 20)), false, allow_local);
+    } else if host_lower.contains("pix-cdn77") {
+        // Fast, valid European CDN77 Anycast nodes (bypassing ISP hijacked domestic caches and distant Singapore nodes)
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 209)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 215)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(185, 59, 222, 14)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(37, 19, 218, 101)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(37, 19, 218, 102)), false, allow_local);
+    } else if host_lower.contains("pix-fl") {
+        // Fast, responsive Fastly Anycast nodes (146.75.119.52 hangs on TLS handshake)
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 67, 52)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 131, 52)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 3, 52)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 195, 52)), false, allow_local);
+    }
+
     lookup_public(hostname, allow_local, &mut candidates).await;
     let mut system = Vec::new();
     lookup_system(hostname, allow_local, &mut system).await;
@@ -471,10 +517,18 @@ async fn connect_one(ip: IpAddr, port: u16) -> Option<TcpStream> {
     let target = SocketAddr::new(ip, port);
     match timeout(Duration::from_millis(2500), TcpStream::connect(target)).await {
         Ok(Ok(stream)) => {
+            eprintln!("[DNS] connect_one to {}:{} SUCCESS", ip, port);
             tune_socket(&stream);
             Some(stream)
         }
-        _ => None,
+        Ok(Err(e)) => {
+            eprintln!("[DNS] connect_one to {}:{} ERROR: {}", ip, port, e);
+            None
+        }
+        Err(_) => {
+            eprintln!("[DNS] connect_one to {}:{} TIMED OUT", ip, port);
+            None
+        }
     }
 }
 
@@ -497,6 +551,7 @@ pub async fn connect_to_remote(hostname: &str, port: u16, allow_local: bool) -> 
     }
 
     let candidates = resolve_candidates(hostname, allow_local).await;
+    eprintln!("[DNS] connect_to_remote for {hostname}:{port}: {} candidates: {:?}", candidates.len(), candidates.iter().map(|c| c.ip).collect::<Vec<_>>());
     if candidates.is_empty() {
         return None;
     }
