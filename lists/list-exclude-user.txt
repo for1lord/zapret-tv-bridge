@@ -15,3 +15,8 @@ github.io
 githubassets.com
 githubusercontent.com
 
+# Anti-Cheat and Game Security Services
+battleye.com
+cdn.battleye.com
+battleye.becdn.net
+

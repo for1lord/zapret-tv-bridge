@@ -195,6 +195,7 @@ if "!USE_STANDALONE!"=="1" (
 ) else (
     python.exe "%PROJECT_DIR%zapret_tv_bridge.py" --install-all
 )
+call "%PROJECT_DIR%update_hosts.bat" >nul 2>&1
 if defined CLI_CMD exit /b
 echo.
 pause
@@ -327,6 +328,7 @@ if "!USE_STANDALONE!"=="1" (
     net stop zapret /y >nul 2>&1
     net start zapret >nul 2>&1
 )
+call "%PROJECT_DIR%update_hosts.bat" >nul 2>&1
 if defined CLI_CMD exit /b
 echo.
 pause

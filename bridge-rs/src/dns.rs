@@ -471,6 +471,10 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 131, 52)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 3, 52)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(151, 101, 195, 52)), false, allow_local);
+    } else if host_lower.contains("battleye") || host_lower.contains("becdn.net") {
+        // Fast, valid European Anycast nodes for BattlEye CDN
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(185, 229, 190, 148)), false, allow_local);
+        push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(185, 229, 190, 147)), false, allow_local);
     }
 
     lookup_public(hostname, allow_local, &mut candidates).await;
