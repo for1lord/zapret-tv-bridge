@@ -723,6 +723,40 @@ fn render_dashboard_html(
     color: var(--text-muted);
     margin-top: 8px;
   }}
+  .tab-nav {{
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }}
+  .tab-btn {{
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 7px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: all 0.2s;
+  }}
+  .tab-btn:hover {{
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+  }}
+  .tab-btn.active {{
+    background: var(--accent);
+    color: #0f172a;
+    border-color: var(--accent);
+  }}
+  .tab-pane {{
+    display: none;
+  }}
+  .tab-pane.active {{
+    display: block;
+  }}
   .stats-grid {{
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -792,6 +826,34 @@ function handleProfileClick(e, path, profileName) {{
   }}
   return true;
 }}
+
+function switchSupercellTab(tab) {{
+  const androidPane = document.getElementById('sc-pane-android');
+  const iosPane = document.getElementById('sc-pane-ios');
+  const androidBtn = document.getElementById('sc-tab-android');
+  const iosBtn = document.getElementById('sc-tab-ios');
+  if (!androidPane || !iosPane) return;
+  if (tab === 'ios') {{
+    androidPane.classList.remove('active');
+    iosPane.classList.add('active');
+    if (androidBtn) androidBtn.classList.remove('active');
+    if (iosBtn) iosBtn.classList.add('active');
+  }} else {{
+    iosPane.classList.remove('active');
+    androidPane.classList.add('active');
+    if (iosBtn) iosBtn.classList.remove('active');
+    if (androidBtn) androidBtn.classList.add('active');
+  }}
+}}
+
+document.addEventListener('DOMContentLoaded', () => {{
+  const ua = navigator.userAgent || '';
+  if (/iPhone|iPad|iPod/i.test(ua)) {{
+    switchSupercellTab('ios');
+  }} else {{
+    switchSupercellTab('android');
+  }}
+}});
 </script>
 </head>
 <body>
@@ -850,29 +912,90 @@ function handleProfileClick(e, path, profileName) {{
       </div>
     </div>
 
-    <!-- Section 4: Supercell Gaming Profile -->
+    <!-- Section 4: Supercell Gaming (Clash Royale & Brawl Stars) -->
     <div class="section">
-      <div class="section-title">4. Brawl Stars & Clash Royale (DNS-профиль)</div>
-      <p class="info-text">Для прямого подключения игр Supercell на iOS скачайте игровой DNS-профиль:</p>
-      <div class="btn-group">
-        <a class="btn" href="/supercell.mobileconfig" onclick="return handleProfileClick(event, '/supercell.mobileconfig', 'COMSS')">📥 Профиль COMSS (Рекомендуется: DoH)</a>
-        <a class="btn" href="/nullsproxy.mobileconfig" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); color: #fff;" onclick="return handleProfileClick(event, '/nullsproxy.mobileconfig', 'Nulls')">📥 Null's Proxy (DoT)</a>
+      <div class="section-title">4. Clash Royale & Brawl Stars (Supercell)</div>
+
+      <div class="tab-nav">
+        <button id="sc-tab-android" class="tab-btn active" onclick="switchSupercellTab('android')">🤖 Android (Частный DNS)</button>
+        <button id="sc-tab-ios" class="tab-btn" onclick="switchSupercellTab('ios')">🍏 iOS / iPhone (Профиль)</button>
       </div>
-      <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
-        ⚠️ <strong>Важно для iPhone:</strong> Apple разрешает загрузку профилей <strong>только через Safari</strong>.<br>
-        Если вы открыли сайт в Edge или Chrome — скопируйте ссылку ниже и откройте её в <strong>Safari</strong>:
+
+      <!-- Android Pane -->
+      <div id="sc-pane-android" class="tab-pane active">
+        <p class="info-text">
+          На Android подключение к серверам Supercell (Clash Royale, Brawl Stars) работает через системный <strong>Частный DNS (DNS-over-TLS)</strong> без сторонних приложений и без VPN:
+        </p>
+
+        <div style="margin-top: 10px;">
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Основной игровой хост (Null's Proxy DoT):</div>
+          <div class="val-row">
+            <code>dns.nullsproxy.com</code>
+            <button class="copy-btn" onclick="copyText('dns.nullsproxy.com', this)">Скопировать</button>
+          </div>
+        </div>
+
+        <div style="margin-top: 8px;">
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Резервный игровой хост (COMSS DoT):</div>
+          <div class="val-row">
+            <code>dns.comss.one</code>
+            <button class="copy-btn" onclick="copyText('dns.comss.one', this)">Скопировать</button>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px;">
+          <a class="btn" href="intent:#Intent;action=android.settings.NETWORK_OPERATOR_SETTINGS;end" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">⚙️ Открыть настройки сети на телефоне</a>
+        </div>
+
+        <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 12px; line-height: 1.6;">
+          <div style="font-weight: 700; color: var(--accent); margin-bottom: 6px;">📋 Инструкция по настройке на Android:</div>
+          <ol style="margin-left: 18px; color: #cbd5e1;">
+            <li>Скопируйте хост <code>dns.nullsproxy.com</code> кнопкой выше.</li>
+            <li>Откройте <strong>Настройки</strong> телефона → <strong>Подключения</strong> (или <strong>Сеть и интернет</strong>).</li>
+            <li>Найдите пункт <strong>Персональный DNS</strong> (или <strong>Частный DNS</strong>).</li>
+            <li>Переключите режим на <strong>«Имя хоста провайдера персонального DNS»</strong>.</li>
+            <li>Вставьте скопированный адрес <code>dns.nullsproxy.com</code> и нажмите <strong>Сохранить</strong>.</li>
+            <li>Перезапустите Clash Royale или Brawl Stars!</li>
+          </ol>
+          <div style="margin-top: 8px; font-size: 11px; color: var(--text-muted);">
+            • <em>Samsung (One UI):</em> Настройки → Подключения → Другие настройки → Персональный DNS.<br>
+            • <em>Xiaomi / POCO (HyperOS / MIUI):</em> Настройки → Подключение и общий доступ → Частный DNS-сервер.<br>
+            • <em>Pixel / Чистый Android:</em> Настройки → Сеть и интернет → Частный DNS.<br>
+            • <em>Realme / OPPO / OnePlus:</em> Настройки → Подключение и общий доступ → Частный DNS.
+          </div>
+        </div>
+
+        <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 12px; color: #bae6fd; line-height: 1.5;">
+          💡 <strong>Лайфхак для Clash Royale:</strong> если при первом запуске полоса загрузки останавливается на <strong>«Обновление 50%»</strong> — включите любой VPN на 1 минуту, чтобы игра загрузила ресурсы обновления до 100%, затем выключите VPN. Все последующие входы и бои будут подключаться моментально через Частный DNS без задержек и без VPN.
+        </div>
       </div>
-      <div class="val-row" style="margin-top: 6px;">
-        <span>COMSS: <code>/supercell.mobileconfig</code></span>
-        <button class="copy-btn" onclick="copyText('http://{ip}:{proxy_port}/supercell.mobileconfig', this)">Копировать для Safari</button>
+
+      <!-- iOS Pane -->
+      <div id="sc-pane-ios" class="tab-pane">
+        <p class="info-text">Для прямого подключения игр Supercell на iOS скачайте игровой DNS-профиль:</p>
+        <div class="btn-group">
+          <a class="btn" href="/supercell.mobileconfig" onclick="return handleProfileClick(event, '/supercell.mobileconfig', 'COMSS')">📥 Профиль COMSS (Рекомендуется: DoH)</a>
+          <a class="btn" href="/nullsproxy.mobileconfig" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2); color: #fff;" onclick="return handleProfileClick(event, '/nullsproxy.mobileconfig', 'Nulls')">📥 Null's Proxy (DoT)</a>
+        </div>
+        <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 12px; color: #fbbf24; line-height: 1.5;">
+          ⚠️ <strong>Важно для iPhone:</strong> Apple разрешает загрузку профилей <strong>только через Safari</strong>.<br>
+          Если вы открыли сайт в Edge или Chrome — скопируйте ссылку ниже и откройте её в <strong>Safari</strong>:
+        </div>
+        <div class="val-row" style="margin-top: 6px;">
+          <span>COMSS: <code>/supercell.mobileconfig</code></span>
+          <button class="copy-btn" onclick="copyText('http://{ip}:{proxy_port}/supercell.mobileconfig', this)">Копировать для Safari</button>
+        </div>
+        <div class="val-row" style="margin-top: 6px;">
+          <span>Null's: <code>/nullsproxy.mobileconfig</code></span>
+          <button class="copy-btn" onclick="copyText('http://{ip}:{proxy_port}/nullsproxy.mobileconfig', this)">Копировать для Safari</button>
+        </div>
+        <p class="info-text" style="font-size: 12px; margin-top: 8px;">
+          После открытия ссылки в Safari: <em>Разрешить -&gt; Настройки iPhone -&gt; Профиль загружен -&gt; Установить</em>.
+        </p>
+        <div style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 12px; color: #bae6fd; line-height: 1.5;">
+          💡 <strong>Лайфхак для Clash Royale:</strong> если при первом запуске полоса зависает на «Обновление 50%», включите любой VPN на 1 минуту, дайте игре скачать ресурсы обновления до 100%, затем выключите VPN.
+        </div>
       </div>
-      <div class="val-row" style="margin-top: 6px;">
-        <span>Null's: <code>/nullsproxy.mobileconfig</code></span>
-        <button class="copy-btn" onclick="copyText('http://{ip}:{proxy_port}/nullsproxy.mobileconfig', this)">Копировать для Safari</button>
-      </div>
-      <p class="info-text" style="font-size: 12px; margin-top: 8px;">
-        После открытия ссылки в Safari: <em>Разрешить -&gt; Настройки iPhone -&gt; Профиль загружен -&gt; Установить</em>.
-      </p>
     </div>
 
     <!-- Section 5: Telemetry Status Grid -->
@@ -991,6 +1114,35 @@ mod tests {
         let text = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(text.contains("PayloadType"));
         assert!(text.contains("dns.comss.one"));
+    }
+
+    #[tokio::test]
+    async fn test_create_web_router_dashboard_android_supercell() {
+        let metrics = Arc::new(ProxyMetrics::new());
+        let config = WebConfig::default_with_port(8080);
+        let router = create_web_router(metrics, config);
+
+        let req = Request::builder()
+            .uri("/")
+            .header("host", "192.168.1.150:8080")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+
+        let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(html.contains("Clash Royale & Brawl Stars"));
+        assert!(html.contains("dns.nullsproxy.com"));
+        assert!(html.contains("dns.comss.one"));
+        assert!(html.contains("sc-tab-android"));
+        assert!(html.contains("sc-tab-ios"));
+        assert!(html.contains("Обновление 50%"));
     }
 
     #[tokio::test]
