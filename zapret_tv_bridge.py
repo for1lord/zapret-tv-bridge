@@ -798,6 +798,14 @@ class ZapretTVBridge:
             pass
         if self.log_file:
             try:
+                if os.path.isfile(self.log_file) and os.path.getsize(self.log_file) >= 2 * 1024 * 1024:
+                    old_log = self.log_file + ".old"
+                    try:
+                        if os.path.exists(old_log):
+                            os.remove(old_log)
+                        os.replace(self.log_file, old_log)
+                    except Exception:
+                        pass
                 with open(self.log_file, "a", encoding="utf-8") as f:
                     f.write(formatted + "\n")
             except Exception:
@@ -1100,6 +1108,14 @@ class ZapretTVBridge:
 
             # 4. Proxy Status & Setup Dashboard HTTP Page
             if method == "GET" and is_addressed_to_self:
+                z_active, z_strat = get_zapret_service_status()
+                tg_active = is_port_in_use(self.tg_port)
+                active_cnt = (1 if z_active else 0) + 1 + (1 if tg_active else 0)
+                badge_cls = "badge" if active_cnt == 3 else "badge badge-warn"
+                z_cls = "contour-pill on" if z_active else "contour-pill off"
+                z_text = (f"АКТИВНА &bull; {z_strat}" if z_strat else "АКТИВНА") if z_active else (f"ОСТАНОВЛЕНА ({z_strat})" if z_strat else "ОСТАНОВЛЕНА")
+                tg_cls = "contour-pill on" if tg_active else "contour-pill off"
+                tg_text = f"{'АКТИВЕН' if tg_active else 'ОСТАНОВЛЕН'} &bull; :{self.tg_port}"
                 html = f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -1174,6 +1190,71 @@ class ZapretTVBridge:
     border-radius: 50%;
     background: var(--success);
     box-shadow: 0 0 8px var(--success);
+  }}
+  .badge.badge-warn {{
+    background: rgba(245, 158, 11, 0.16);
+    color: #f59e0b;
+    border-color: #f59e0b;
+  }}
+  .badge.badge-warn::before {{
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+  }}
+  .contours-box {{
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }}
+  .contour-row {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    flex-wrap: wrap;
+  }}
+  .contour-name {{
+    color: #cbd5e1;
+    font-weight: 600;
+  }}
+  .contour-pill {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }}
+  .contour-pill::before {{
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+  }}
+  .contour-pill.on {{
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+  }}
+  .contour-pill.on::before {{
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
+  }}
+  .contour-pill.off {{
+    background: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }}
+  .contour-pill.off::before {{
+    background: #f59e0b;
   }}
   .desc {{
     font-size: 14px;
@@ -1347,11 +1428,26 @@ document.addEventListener('DOMContentLoaded', () => {{
   <div class="card">
     <div class="header">
       <h1>Zapret TV & Mobile Bridge</h1>
-      <span class="badge">РАБОТАЕТ</span>
+      <span class="{badge_cls}">РАБОТАЕТ &bull; {active_cnt}/3</span>
     </div>
     <p class="desc">
       Локальный сетевой шлюз и прокси-мост с поддержкой <strong>Умной маршрутизации трафика</strong> (Smart Routing). Оптимизирует потоковое видео и медиа-сервисы через Zapret на ПК.
     </p>
+
+    <div class="contours-box">
+      <div class="contour-row">
+        <span class="contour-name">🛡️ Служба Zapret (DPI)</span>
+        <span class="{z_cls}">{z_text}</span>
+      </div>
+      <div class="contour-row">
+        <span class="contour-name">🌐 HTTP / SOCKS5 шлюз</span>
+        <span class="contour-pill on">АКТИВЕН &bull; :{self.port}</span>
+      </div>
+      <div class="contour-row">
+        <span class="contour-name">✈️ Telegram MTProto</span>
+        <span class="{tg_cls}">{tg_text}</span>
+      </div>
+    </div>
 
     <!-- Section 1: PAC Autoconfig for iOS / macOS / Windows -->
     <div class="section">

@@ -38,7 +38,19 @@ pub async fn run_proxy_listener_with_web(
     web_router: axum::Router,
 ) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    println!("[Proxy] Universal listener active on {}", addr);
+    run_proxy_accept_loop(listener, router, metrics, web_router).await
+}
+
+/// Runs the universal proxy accept loop on an already-bound `TcpListener`.
+pub async fn run_proxy_accept_loop(
+    listener: TcpListener,
+    router: Arc<SmartRouter>,
+    metrics: Arc<ProxyMetrics>,
+    web_router: axum::Router,
+) -> io::Result<()> {
+    if let Ok(addr) = listener.local_addr() {
+        println!("[Proxy] Universal listener active on {}", addr);
+    }
 
     loop {
         let (stream, peer_addr) = match listener.accept().await {
@@ -111,7 +123,16 @@ pub async fn handle_inbound_stream_with_web(
     }
 
     let first_byte = peek_buf[0];
-    eprintln!("[Proxy] Inbound stream from {peer_addr}: first byte 0x{first_byte:02X} ('{}')", if first_byte.is_ascii_graphic() { first_byte as char } else { '.' });
+    if crate::logger::verbose_logging_enabled() {
+        eprintln!(
+            "[Proxy] Inbound stream from {peer_addr}: first byte 0x{first_byte:02X} ('{}')",
+            if first_byte.is_ascii_graphic() {
+                first_byte as char
+            } else {
+                '.'
+            }
+        );
+    }
     if first_byte == socks5::SOCKS_VERSION {
         // Dispatch to SOCKS5 engine (tracks its own connection guard)
         socks5::handle_socks5_stream(stream, router, metrics).await
@@ -119,7 +140,9 @@ pub async fn handle_inbound_stream_with_web(
         // Dispatch to HTTP engine (tracks its own connection guard)
         handle_http_stream_with_web(stream, peer_addr, router, metrics, web_router).await
     } else {
-        eprintln!("[Proxy] Inbound connection from {peer_addr}: unsupported protocol leading byte 0x{first_byte:02X}");
+        if crate::logger::verbose_logging_enabled() {
+            eprintln!("[Proxy] Inbound connection from {peer_addr}: unsupported protocol leading byte 0x{first_byte:02X}");
+        }
         metrics.inc_errors();
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -206,7 +229,9 @@ pub async fn handle_http_stream_with_web(
                         }
                     }
                 }
-                eprintln!("[Proxy] HTTP request from {_peer_addr}: {method} {target} (path: {path}, is_connect={is_connect})");
+                if crate::logger::verbose_logging_enabled() {
+                    eprintln!("[Proxy] HTTP request from {_peer_addr}: {method} {target} (path: {path}, is_connect={is_connect})");
+                }
                 break (offset, is_connect, target, path, method);
             }
             Ok(httparse::Status::Partial) => {
@@ -295,8 +320,13 @@ pub async fn handle_http_connect(
         }
     };
 
-    let peer = client.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
-    println!("[Proxy] CONNECT {target} from {peer}");
+    if crate::logger::verbose_logging_enabled() {
+        let peer = client
+            .peer_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        println!("[Proxy] CONNECT {target} from {peer}");
+    }
 
     let (should_route, reason) = router.should_route(&host);
     if should_route {
@@ -307,7 +337,9 @@ pub async fn handle_http_connect(
         .map(|addr| addr.ip().is_loopback())
         .unwrap_or(false);
     if let Some(blocked) = blocked_literal(&host, allow_local) {
-        eprintln!("[Proxy] CONNECT {target} blocked: upstream is private/local");
+        if crate::logger::verbose_logging_enabled() {
+            eprintln!("[Proxy] CONNECT {target} blocked: upstream is private/local");
+        }
         let _ = client
             .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .await;
@@ -319,11 +351,18 @@ pub async fn handle_http_connect(
     let remote_conn = connect_upstream(&host, port, allow_local).await;
     let (mut remote, remote_ip, confirm_cache) = match remote_conn {
         Some(conn) => {
-            println!("[Proxy] CONNECT {target} -> connected to upstream {}:{}", conn.ip, port);
+            if crate::logger::verbose_logging_enabled() {
+                println!(
+                    "[Proxy] CONNECT {target} -> connected to upstream {}:{}",
+                    conn.ip, port
+                );
+            }
             (conn.stream, conn.ip, conn.confirm_cache)
         }
         None => {
-            eprintln!("[Proxy] CONNECT {target} -> FAILED to connect upstream");
+            if crate::logger::verbose_logging_enabled() {
+                eprintln!("[Proxy] CONNECT {target} -> FAILED to connect upstream");
+            }
             metrics.inc_errors();
             let _ = client.write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n").await;
             let _ = client.flush().await;
@@ -367,7 +406,9 @@ pub async fn handle_http_connect(
 
     match relay_res {
         Ok((up, down)) => {
-            println!("[Proxy] CONNECT {target} finished: up {up} B, down {down} B");
+            if crate::logger::verbose_logging_enabled() {
+                println!("[Proxy] CONNECT {target} finished: up {up} B, down {down} B");
+            }
             metrics.add_bytes_up(up);
             metrics.add_bytes_down(down);
             if confirm_cache && down > 0 {
@@ -376,7 +417,9 @@ pub async fn handle_http_connect(
             Ok(())
         }
         Err(e) => {
-            eprintln!("[Proxy] CONNECT {target} relay ended: {e}");
+            if crate::logger::verbose_logging_enabled() {
+                eprintln!("[Proxy] CONNECT {target} relay ended: {e}");
+            }
             if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
             {
                 metrics.inc_errors();
@@ -395,8 +438,13 @@ pub async fn handle_plain_http(
     metrics: Arc<ProxyMetrics>,
 ) -> io::Result<()> {
     let (host, port) = parse_host_port(target, 80);
-    let peer = client.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
-    eprintln!("[Proxy] HTTP-PLAIN {target} from {peer}");
+    if crate::logger::verbose_logging_enabled() {
+        let peer = client
+            .peer_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        eprintln!("[Proxy] HTTP-PLAIN {target} from {peer}");
+    }
     let (should_route, reason) = router.should_route(&host);
     if should_route {
         router.observe_domain(&host, reason);
@@ -446,7 +494,9 @@ pub async fn handle_plain_http(
 
     match relay_res {
         Ok((up, down)) => {
-            println!("[Proxy] CONNECT {target} finished: up {up} B, down {down} B");
+            if crate::logger::verbose_logging_enabled() {
+                println!("[Proxy] HTTP-PLAIN {target} finished: up {up} B, down {down} B");
+            }
             metrics.add_bytes_up(up);
             metrics.add_bytes_down(down);
             if confirm_cache && down > 0 {
@@ -455,7 +505,9 @@ pub async fn handle_plain_http(
             Ok(())
         }
         Err(e) => {
-            eprintln!("[Proxy] CONNECT {target} relay ended: {e}");
+            if crate::logger::verbose_logging_enabled() {
+                eprintln!("[Proxy] HTTP-PLAIN {target} relay ended: {e}");
+            }
             if e.kind() != io::ErrorKind::ConnectionReset && e.kind() != io::ErrorKind::NotConnected
             {
                 metrics.inc_errors();
@@ -496,6 +548,10 @@ fn blocked_literal(host: &str, allow_local: bool) -> Option<io::Error> {
 }
 
 fn request_is_local(path: &str, host_header: &str, local_port: u16) -> bool {
+    if let Some(absolute_host) = absolute_request_host(path) {
+        return is_addressed_to_self(&absolute_host, local_port);
+    }
+
     let bare = path
         .split('?')
         .next()
@@ -503,39 +559,64 @@ fn request_is_local(path: &str, host_header: &str, local_port: u16) -> bool {
         .split('#')
         .next()
         .unwrap_or(path);
-    if is_management_path(bare) {
+
+    if is_autoconfig_path(bare) {
         return true;
     }
-    if let Some(absolute_host) = absolute_request_host(path) {
-        return is_addressed_to_self(&absolute_host, local_port);
-    }
+
     if path.starts_with('/') && !path.starts_with("//") {
         let host = if host_header.starts_with('/') {
             ""
         } else {
-            host_header
+            host_header.trim()
         };
-        return host.is_empty() || is_addressed_to_self(host, local_port);
+        if host_is_local_or_lan(host, local_port) {
+            return true;
+        }
+        return false;
     }
+
     is_addressed_to_self(host_header, local_port)
 }
 
-fn is_management_path(path: &str) -> bool {
+/// True when `host_header` points to this bridge, a local/LAN alias, or a non-public IP.
+fn host_is_local_or_lan(host_header: &str, local_port: u16) -> bool {
+    if host_header.is_empty() || is_addressed_to_self(host_header, local_port) {
+        return true;
+    }
+    let (host, _) = parse_host_port(host_header, local_port);
+    let h = host
+        .trim()
+        .trim_matches(['[', ']'])
+        .split('%')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if h.is_empty()
+        || h == "localhost"
+        || h.ends_with(".local")
+        || h.ends_with(".lan")
+        || h.ends_with(".internal")
+        || (!h.contains('.') && !h.contains(':'))
+    {
+        return true;
+    }
+    if let Ok(ip) = h.parse::<std::net::IpAddr>() {
+        return !upstream_allowed(ip, false);
+    }
+    false
+}
+
+fn is_autoconfig_path(path: &str) -> bool {
     let path = path.trim_end_matches('/');
-    let path = if path.is_empty() { "/" } else { path };
     matches!(
         path,
-        "/" | "/index.html"
-            | "/health"
-            | "/favicon.ico"
-            | "/proxy.pac"
+        "/proxy.pac"
             | "/anticensority.pac"
             | "/pac"
             | "/wpad.dat"
             | "/PROXY.PAC"
             | "/Proxy.Pac"
-            | "/api/stats"
-            | "/stats"
             | "/supercell.mobileconfig"
             | "/brawlstars.mobileconfig"
             | "/clashroyale.mobileconfig"
@@ -717,7 +798,12 @@ mod tests {
     #[test]
     fn test_origin_form_remote_is_not_local() {
         assert!(!request_is_local("/watch", "youtube.com", 8080));
+        assert!(!request_is_local("/", "youtube.com", 8080));
+        assert!(!request_is_local("/favicon.ico", "example.com", 8080));
+        assert!(!request_is_local("/health", "example.com", 8080));
         assert!(request_is_local("/health", "127.0.0.1:8080", 8080));
+        assert!(request_is_local("/", "192.168.0.50:8080", 8080));
+        assert!(request_is_local("/proxy.pac", "custom-host.lan:8888", 8080));
         assert!(request_is_local(
             "http://127.0.0.1:8080/proxy.pac",
             "127.0.0.1:8080",

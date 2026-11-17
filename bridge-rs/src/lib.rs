@@ -1,6 +1,7 @@
 pub mod access;
 pub mod dns;
 pub mod faketls;
+pub mod logger;
 pub mod menu;
 pub mod metrics;
 pub mod mtproto;

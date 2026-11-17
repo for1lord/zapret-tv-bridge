@@ -67,7 +67,7 @@ fn read_ipv4_routes() -> (Vec<V4Net>, Vec<Ipv4Addr>) {
 
     let mut size: u32 = 0;
     let _ = unsafe { GetIpForwardTable(std::ptr::null_mut(), &mut size, 0) };
-    if size < 4 || size > 2 * 1024 * 1024 {
+    if !(4..=2 * 1024 * 1024).contains(&size) {
         return (Vec::new(), Vec::new());
     }
     let mut buf = vec![0u8; size as usize];
@@ -226,9 +226,63 @@ fn is_documentation_v6(v6: Ipv6Addr) -> bool {
     v6.segments()[0] == 0x2001 && v6.segments()[1] == 0x0db8
 }
 
+/// Checks via Win32 `GetTcpTable` whether any local IPv4 socket is in `LISTEN` state on `port`.
+/// Zero network packets and zero socket connections.
+#[cfg(windows)]
+pub fn is_tcp_port_listening(port: u16) -> bool {
+    #[link(name = "iphlpapi")]
+    extern "system" {
+        fn GetTcpTable(table: *mut u8, size: *mut u32, order: i32) -> u32;
+    }
+
+    const MIB_TCP_STATE_LISTEN: u32 = 2;
+    let mut size: u32 = 0;
+    let _ = unsafe { GetTcpTable(std::ptr::null_mut(), &mut size, 0) };
+    if !(4..=4 * 1024 * 1024).contains(&size) {
+        return false;
+    }
+    let mut buf = vec![0u8; (size as usize) + 256];
+    let mut cap = buf.len() as u32;
+    let rc = unsafe { GetTcpTable(buf.as_mut_ptr(), &mut cap, 0) };
+    if rc != 0 || buf.len() < 4 {
+        return false;
+    }
+    let count = u32::from_le_bytes(buf[0..4].try_into().unwrap()) as usize;
+    for i in 0..count {
+        let off = 4 + i * 20;
+        if off + 12 > buf.len() {
+            break;
+        }
+        let state = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap());
+        if state != MIB_TCP_STATE_LISTEN {
+            continue;
+        }
+        let local_port = u16::from_be_bytes([buf[off + 8], buf[off + 9]]);
+        if local_port == port {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(windows))]
+pub fn is_tcp_port_listening(port: u16) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tcp_port_listening_detection() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(is_tcp_port_listening(port));
+        drop(listener);
+        assert!(!is_tcp_port_listening(port));
+    }
 
     #[test]
     fn upstream_policy() {

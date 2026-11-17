@@ -2,7 +2,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use zapret_tv_bridge_rs::router::{
@@ -16,14 +15,23 @@ use zapret_tv_bridge_rs::router::{
 
 struct TrackingAllocator;
 
-static TRACKING_ACTIVE: AtomicBool = AtomicBool::new(false);
-static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static THREAD_TRACKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static THREAD_ALLOC_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn record_thread_alloc() {
+    let _ = THREAD_TRACKING.try_with(|active| {
+        if active.get() {
+            let _ = THREAD_ALLOC_COUNT.try_with(|cnt| cnt.set(cnt.get() + 1));
+        }
+    });
+}
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if TRACKING_ACTIVE.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
-        }
+        record_thread_alloc();
         System.alloc(layout)
     }
 
@@ -32,16 +40,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if TRACKING_ACTIVE.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
-        }
+        record_thread_alloc();
         System.alloc_zeroed(layout)
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if TRACKING_ACTIVE.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
-        }
+        record_thread_alloc();
         System.realloc(ptr, layout, new_size)
     }
 }
@@ -49,16 +53,16 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 #[global_allocator]
 static GLOBAL_ALLOC: TrackingAllocator = TrackingAllocator;
 
-/// Executes closure and verifies that exactly zero heap allocations occurred.
+/// Executes closure and verifies that exactly zero heap allocations occurred on the current thread.
 fn assert_zero_alloc<F, R>(name: &str, f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    ALLOC_COUNT.store(0, Ordering::SeqCst);
-    TRACKING_ACTIVE.store(true, Ordering::SeqCst);
+    THREAD_ALLOC_COUNT.with(|cnt| cnt.set(0));
+    THREAD_TRACKING.with(|active| active.set(true));
     let result = f();
-    TRACKING_ACTIVE.store(false, Ordering::SeqCst);
-    let count = ALLOC_COUNT.load(Ordering::SeqCst);
+    THREAD_TRACKING.with(|active| active.set(false));
+    let count = THREAD_ALLOC_COUNT.with(|cnt| cnt.get());
     assert_eq!(
         count, 0,
         "Zero-allocation hot-path violation in '{}': {} heap allocations occurred",

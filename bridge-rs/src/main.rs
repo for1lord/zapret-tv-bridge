@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use zapret_tv_bridge_rs::{menu, metrics, proxy, router, socks5};
+use zapret_tv_bridge_rs::{logger, menu, metrics, proxy, router, socks5};
 
 /// Multi-threaded Tokio runtime configuration builder enforcing 4 worker threads
 /// for minimal memory footprint (7-12 MB) on Windows IOCP.
@@ -101,12 +101,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 3. Interactive Menu Mode
-    // Default when double-clicked in Windows Explorer or run without arguments in console
+    // Default when double-clicked in Windows Explorer or run without arguments in an interactive console
     let is_daemon = args.iter().any(|a| a == "--daemon");
     let is_foreground = args.iter().any(|a| a == "--server" || a == "--foreground");
     let explicit_menu = args.iter().any(|a| a == "--menu");
+    let has_custom_addr_env = std::env::var_os("BRIDGE_PROXY_ADDR").is_some()
+        || std::env::var_os("BRIDGE_SOCKS5_ADDR").is_some()
+        || std::env::var_os("BRIDGE_TG_ADDR").is_some();
 
-    if explicit_menu || (!is_daemon && !is_foreground && args.len() <= 1) {
+    if explicit_menu
+        || (!is_daemon
+            && !is_foreground
+            && args.len() <= 1
+            && !has_custom_addr_env
+            && is_stdin_terminal())
+    {
         menu::ensure_admin(&["--menu".to_string()]);
         menu::run_interactive_menu(&base_dir);
         return Ok(());
@@ -474,8 +483,13 @@ const TG_DC_ENDPOINTS: &[&str] = &[
 ];
 
 async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn std::error::Error>> {
-    // Automatically ensure Zapret service is started if installed
-    menu::ensure_zapret_service_running();
+    // Rotate oversized runtime logs on startup (2 MB cap -> .old)
+    logger::rotate_all_logs(&base_dir, logger::DEFAULT_MAX_LOG_BYTES);
+
+    // Automatically ensure Zapret service is started if installed (skip in isolated custom-addr tests)
+    if std::env::var_os("BRIDGE_PROXY_ADDR").is_none() {
+        menu::ensure_zapret_service_running();
+    }
 
     if !is_daemon {
         println!("=====================================================");
@@ -484,16 +498,36 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         println!("[*] Base directory: {:?}", base_dir);
     }
 
-    let router = Arc::new(router::SmartRouter::new(&base_dir));
-    router::arm_service_reload();
-    let metrics = Arc::new(metrics::ProxyMetrics::new());
-
     let http_addr: SocketAddr = std::env::var("BRIDGE_PROXY_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
         .parse()?;
     let socks5_addr: SocketAddr = std::env::var("BRIDGE_SOCKS5_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:1080".to_string())
         .parse()?;
+
+    // Bind primary proxy and SOCKS5 listeners BEFORE writing PID/IP files
+    // so a duplicate instance never clobbers or kills an already-running daemon!
+    let http_listener = match tokio::net::TcpListener::bind(http_addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("\n[!] Ошибка: Порт {} занят или недоступен: {}", http_addr, e);
+            eprintln!("    Возможно, служба шлюза уже запущена в фоновом режиме.");
+            eprintln!("    Используйте: ZapretTVBridge.exe --status или ZapretTVBridge.exe --restart");
+            return Err(format!("HTTP proxy port {} bind failed: {}", http_addr, e).into());
+        }
+    };
+
+    let socks5_listener = match socks5::bind_socks5_listener(socks5_addr) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("\n[!] Ошибка: Порт SOCKS5 {} недоступен: {}", socks5_addr, e);
+            return Err(format!("SOCKS5 port {} bind failed: {}", socks5_addr, e).into());
+        }
+    };
+
+    let router = Arc::new(router::SmartRouter::new(&base_dir));
+    router::arm_service_reload();
+    let metrics = Arc::new(metrics::ProxyMetrics::new());
 
     let secret_file = base_dir.join("tg_secret.txt");
     let tg_secret_str = if let Ok(sec) = std::env::var("BRIDGE_TG_SECRET") {
@@ -538,7 +572,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     let start_time = std::time::Instant::now();
     let default_ip = zapret_tv_bridge_rs::pac::get_local_ip();
 
-    // Register PID and IP files with RAII cleanup
+    // Register PID and IP files with RAII cleanup only AFTER sockets are exclusively bound
     let pid_file = base_dir.join("tv_proxy.pid");
     let ip_file = base_dir.join("tv_proxy.ip");
     let tg_pid_file = base_dir.join("tg_proxy.pid");
@@ -551,6 +585,28 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         tg_port,
         base_dir: base_dir.clone(),
     };
+    logger::append_daemon_log(
+        &base_dir,
+        &format!(
+            "Bridge started [PID {}]: HTTP {}, SOCKS5 {}, TG {}",
+            std::process::id(),
+            http_addr,
+            socks5_addr,
+            tg_addr
+        ),
+    );
+
+    // Periodic housekeeping: 2 MB log auto-rotation + expired DNS cache pruning
+    let hk_base_dir = base_dir.clone();
+    let _housekeeping_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            logger::rotate_all_logs(&hk_base_dir, logger::DEFAULT_MAX_LOG_BYTES);
+            zapret_tv_bridge_rs::dns::GLOBAL_DNS_CACHE.prune_expired();
+        }
+    });
 
     let tg_process_secret = tg_secret_str.trim().to_string();
     let tg_link_secret = telegram_link_secret(&tg_process_secret);
@@ -559,7 +615,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         http_addr.port(),
         default_ip.clone(),
         base_dir.clone(),
-        tg_port,
+        tg_addr.port(),
         tg_link_secret,
         start_time,
     );
@@ -570,7 +626,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     let m1 = Arc::clone(&metrics);
     let w1 = web_router.clone();
     let mut _http_handle = tokio::spawn(async move {
-        if let Err(e) = proxy::run_proxy_listener_with_web(http_addr, r1, m1, w1).await {
+        if let Err(e) = proxy::run_proxy_accept_loop(http_listener, r1, m1, w1).await {
             eprintln!("[Proxy] Universal autodetect listener notice on {http_addr}: {e}");
             Err(e)
         } else {
@@ -582,7 +638,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     let r2 = Arc::clone(&router);
     let m2 = Arc::clone(&metrics);
     let mut _socks5_handle = tokio::spawn(async move {
-        if let Err(e) = socks5::run_socks5_listener(socks5_addr, r2, m2).await {
+        if let Err(e) = socks5::run_socks5_accept_loop(socks5_listener, r2, m2).await {
             eprintln!("[Proxy] Dedicated SOCKS5 listener notice on {socks5_addr}: {e}");
             Err(e)
         } else {
@@ -614,13 +670,13 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     };
     let prefer_python = engine == TgEngine::Python;
 
-    let port_already_in_use = std::net::TcpListener::bind(format!("0.0.0.0:{}", tg_port)).is_err();
+    let port_already_in_use = std::net::TcpListener::bind(tg_addr).is_err();
 
     let mut _tg_handle = if port_already_in_use {
         if !is_daemon {
             println!(
-                "[*] Telegram WS Proxy уже активен на 0.0.0.0:{}",
-                tg_port
+                "[*] Telegram WS Proxy уже активен на {}",
+                tg_addr
             );
         }
         tokio::spawn(async { Ok::<(), std::io::Error>(()) })
@@ -628,11 +684,11 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         stop_recorded_tg_pid(&base_dir);
 
         let mut cmd = std::process::Command::new(&exe_path);
-        cmd.args(&[
+        cmd.args([
             "--host",
-            "0.0.0.0",
+            &tg_addr.ip().to_string(),
             "--port",
-            &tg_port.to_string(),
+            &tg_addr.port().to_string(),
             "--secret",
             &tg_process_secret,
         ]);
@@ -641,7 +697,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         }
         let tg_log_path = base_dir.join("tg_proxy.log");
         if let Some(s) = tg_log_path.to_str() {
-            cmd.args(&["--log-file", s]);
+            cmd.args(["--log-file", s]);
         }
         cmd.current_dir(&base_dir);
         #[cfg(windows)]
@@ -657,22 +713,45 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                 let _ = std::fs::write(&tg_pid_file, c_pid.to_string());
                 if !is_daemon {
                     println!(
-                        "[*] Telegram WS Proxy (tgwsproxy standalone) запущен на 0.0.0.0:{} [PID: {}]",
-                        tg_port, c_pid
+                        "[*] Telegram WS Proxy (tgwsproxy standalone) запущен на {} [PID: {}]",
+                        tg_addr, c_pid
                     );
                 }
                 let pid_file_copy = tg_pid_file.clone();
                 let exe_bg = exe_path.clone();
                 let secret_bg = tg_process_secret.clone();
                 let base_bg = base_dir.clone();
-                let port_bg = tg_port;
+                let port_bg = tg_addr.port();
+                let metrics_fb = Arc::clone(&metrics);
+                let masking_fb = tg_masking.clone();
                 tokio::spawn(async move {
                     let mut child = child;
+                    let mut fast_exits = 0u32;
+                    let mut spawned_at = std::time::Instant::now();
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
                         match child.try_wait() {
                             Ok(None) => {}
                             other => {
+                                if spawned_at.elapsed() < std::time::Duration::from_secs(30) {
+                                    fast_exits += 1;
+                                } else {
+                                    fast_exits = 1;
+                                }
+                                if fast_exits >= 3 {
+                                    eprintln!("[TgWsProxy] standalone exited ({other:?}) 3 times rapidly; switching to built-in Rust FakeTLS gateway");
+                                    let _ = std::fs::remove_file(&pid_file_copy);
+                                    let fb_cfg = zapret_tv_bridge_rs::faketls::TgGatewayConfig::new(
+                                        tg_addr,
+                                        tg_secret,
+                                        masking_fb,
+                                    );
+                                    return zapret_tv_bridge_rs::faketls::run_tg_gateway(
+                                        fb_cfg,
+                                        metrics_fb,
+                                    )
+                                    .await;
+                                }
                                 eprintln!("[TgWsProxy] process stopped ({other:?}). Restarting in 3s; HTTP proxy stays up");
                                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                                 match spawn_tgws_exe(&exe_bg, port_bg, &secret_bg, &base_bg) {
@@ -680,6 +759,7 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
                                         let _ =
                                             std::fs::write(&pid_file_copy, next.id().to_string());
                                         child = next;
+                                        spawned_at = std::time::Instant::now();
                                     }
                                     Err(e) => eprintln!("[TgWsProxy] restart failed: {e}"),
                                 }

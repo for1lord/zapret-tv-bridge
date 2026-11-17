@@ -157,8 +157,8 @@ pub fn is_bridge_running(base_dir: &Path) -> (bool, Option<u32>) {
     (false, None)
 }
 
-/// Checks whether Telegram Proxy (tgwsproxy) is running (via PID file or port 1443 probe).
-pub fn is_tg_proxy_running(base_dir: &Path) -> (bool, Option<u32>) {
+/// Checks whether Telegram Proxy (builtin or tgwsproxy) is active on the configured port.
+pub fn is_tg_proxy_running_on_port(base_dir: &Path, tg_port: u16) -> (bool, Option<u32>) {
     let pid_file = base_dir.join("tg_proxy.pid");
     if pid_file.exists() {
         if let Ok(content) = std::fs::read_to_string(&pid_file) {
@@ -170,25 +170,187 @@ pub fn is_tg_proxy_running(base_dir: &Path) -> (bool, Option<u32>) {
         }
     }
 
-    // Secondary check: probe port 1443
-    if let Ok(_stream) = std::net::TcpStream::connect_timeout(
-        &"127.0.0.1:1443".parse().unwrap(),
-        std::time::Duration::from_millis(300),
-    ) {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], tg_port));
+    if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(120)).is_ok() {
         return (true, None);
     }
 
     (false, None)
 }
 
+/// Checks whether Telegram Proxy (tgwsproxy) is running (via PID file or port 1443 probe).
+pub fn is_tg_proxy_running(base_dir: &Path) -> (bool, Option<u32>) {
+    is_tg_proxy_running_on_port(base_dir, 1443)
+}
+
+/// Formats a raw Telegram secret (`32 hex`, `dd...`, or `ee...` FakeTLS masking secret) for `tg://proxy` links.
+pub fn format_telegram_secret(raw: &str) -> String {
+    let s = raw.trim();
+    let prefix = s.get(..2).unwrap_or("").to_ascii_lowercase();
+    if prefix == "dd" || prefix == "ee" {
+        s.to_string()
+    } else if s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("dd{s}")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Fast zero-process Win32 query of the `zapret` service state and active strategy via SCM and Registry.
+#[cfg(windows)]
+pub fn query_zapret_service_fast() -> Option<(bool, String)> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ServiceStatus {
+        dw_service_type: u32,
+        dw_current_state: u32,
+        dw_controls_accepted: u32,
+        dw_win32_exit_code: u32,
+        dw_service_specific_exit_code: u32,
+        dw_check_point: u32,
+        dw_wait_hint: u32,
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegOpenKeyExW(
+            hKey: isize,
+            lpSubKey: *const u16,
+            ulOptions: u32,
+            samDesired: u32,
+            phkResult: *mut isize,
+        ) -> i32;
+        fn RegQueryValueExW(
+            hKey: isize,
+            lpValueName: *const u16,
+            lpReserved: *const u32,
+            lpType: *mut u32,
+            lpData: *mut u8,
+            lpcbData: *mut u32,
+        ) -> i32;
+        fn RegCloseKey(hKey: isize) -> i32;
+        fn OpenSCManagerW(
+            lpMachineName: *const u16,
+            lpDatabaseName: *const u16,
+            dwDesiredAccess: u32,
+        ) -> isize;
+        fn OpenServiceW(
+            hSCManager: isize,
+            lpServiceName: *const u16,
+            dwDesiredAccess: u32,
+        ) -> isize;
+        fn QueryServiceStatus(hService: isize, lpServiceStatus: *mut ServiceStatus) -> i32;
+        fn CloseServiceHandle(hSCObject: isize) -> i32;
+    }
+
+    const HKEY_LOCAL_MACHINE: isize = 0x80000002u32 as i32 as isize;
+    const KEY_QUERY_VALUE: u32 = 0x0001;
+    const SC_MANAGER_CONNECT: u32 = 0x0001;
+    const SERVICE_QUERY_STATUS: u32 = 0x0004;
+    const SERVICE_RUNNING: u32 = 4;
+
+    let mut strategy = String::new();
+    let subkey: Vec<u16> = OsStr::new(r"System\CurrentControlSet\Services\zapret")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let val_name: Vec<u16> = OsStr::new("zapret-discord-youtube")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut hkey: isize = 0;
+    if unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey.as_ptr(), 0, KEY_QUERY_VALUE, &mut hkey) }
+        == 0
+        && hkey != 0
+    {
+        let mut buf = [0u16; 256];
+        let mut cb_data: u32 = (buf.len() * 2) as u32;
+        let mut reg_type: u32 = 0;
+        let rc = unsafe {
+            RegQueryValueExW(
+                hkey,
+                val_name.as_ptr(),
+                std::ptr::null(),
+                &mut reg_type,
+                buf.as_mut_ptr() as *mut u8,
+                &mut cb_data,
+            )
+        };
+        if rc == 0 && cb_data >= 2 {
+            let u16_len = (cb_data as usize) / 2;
+            let slice = &buf[..u16_len];
+            let end = slice.iter().position(|&c| c == 0).unwrap_or(slice.len());
+            strategy = String::from_utf16_lossy(&slice[..end]).trim().to_string();
+        }
+        unsafe { RegCloseKey(hkey) };
+    }
+
+    let scm = unsafe { OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT) };
+    if scm == 0 {
+        return None;
+    }
+
+    let svc_name: Vec<u16> = OsStr::new("zapret")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let svc = unsafe { OpenServiceW(scm, svc_name.as_ptr(), SERVICE_QUERY_STATUS) };
+    if svc == 0 {
+        unsafe { CloseServiceHandle(scm) };
+        return Some((false, strategy));
+    }
+
+    let mut status = ServiceStatus::default();
+    let ok = unsafe { QueryServiceStatus(svc, &mut status) };
+    unsafe {
+        CloseServiceHandle(svc);
+        CloseServiceHandle(scm);
+    }
+
+    if ok != 0 {
+        Some((status.dw_current_state == SERVICE_RUNNING, strategy))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+pub fn query_zapret_service_fast() -> Option<(bool, String)> {
+    None
+}
+
 /// Checks Zapret Windows service status and active strategy preset.
 pub fn get_zapret_service_status() -> (bool, String) {
+    if let Some((running, strategy)) = query_zapret_service_fast() {
+        if running {
+            return (true, strategy);
+        }
+        // Service not running in SCM: quick fallback check for standalone winws.exe
+        if let Ok(out) = Command::new("tasklist")
+            .args(["/NH", "/FI", "IMAGENAME eq winws.exe"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            if String::from_utf8_lossy(&out.stdout)
+                .to_ascii_lowercase()
+                .contains("winws.exe")
+            {
+                return (true, strategy);
+            }
+        }
+        return (false, strategy);
+    }
+
     let mut is_running = false;
     let mut strategy = String::new();
 
     // Query registry for active strategy
     let reg_output = Command::new("reg")
-        .args(&[
+        .args([
             "query",
             r"HKLM\System\CurrentControlSet\Services\zapret",
             "/v",
@@ -209,7 +371,7 @@ pub fn get_zapret_service_status() -> (bool, String) {
     }
 
     // Query sc.exe for service status
-    let sc_output = Command::new("sc").args(&["query", "zapret"]).output();
+    let sc_output = Command::new("sc").args(["query", "zapret"]).output();
     if let Ok(out) = sc_output {
         let text = String::from_utf8_lossy(&out.stdout).to_uppercase();
         if text.contains("RUNNING") || text.contains(": 4") {
@@ -220,7 +382,7 @@ pub fn get_zapret_service_status() -> (bool, String) {
     // Fallback: check winws.exe process in tasklist
     if !is_running {
         let task_output = Command::new("tasklist")
-            .args(&["/FI", "IMAGENAME eq winws.exe"])
+            .args(["/FI", "IMAGENAME eq winws.exe"])
             .output();
         if let Ok(out) = task_output {
             let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
@@ -501,12 +663,7 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
             println!("  PAC URL:               http://{}/proxy.pac", host_port);
             println!("  Smart TV:              IP {}  Port 8080", local_ip);
             if !tg_secret.is_empty() {
-                let clean_secret = tg_secret.strip_prefix("dd").unwrap_or(&tg_secret);
-                let clean_secret = if clean_secret.len() >= 32 {
-                    &clean_secret[..32]
-                } else {
-                    clean_secret
-                };
+                let link_secret = format_telegram_secret(&tg_secret);
                 let (tg_running, tg_pid) = is_tg_proxy_running(base_dir);
                 let tg_tag = if tg_running {
                     if let Some(p) = tg_pid {
@@ -518,8 +675,8 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
                     " [STOPPED]".to_string()
                 };
                 println!(
-                    "  Telegram (tgwsproxy):  tg://proxy?server={}&port=1443&secret=dd{}{}",
-                    local_ip, clean_secret, tg_tag
+                    "  Telegram (tgwsproxy):  tg://proxy?server={}&port=1443&secret={}{}",
+                    local_ip, link_secret, tg_tag
                 );
             }
         }
@@ -993,15 +1150,22 @@ pub fn cmd_remove_all(base_dir: &Path) -> bool {
     cmd_remove_strategy();
     cmd_stop(base_dir);
     cmd_fix_proxy();
-    let _ = Command::new("netsh")
-        .args(&[
-            "advfirewall",
-            "firewall",
-            "delete",
-            "rule",
-            "name=Zapret TV Bridge - Block QUIC (UDP 443)",
-        ])
-        .output();
+    for rule_name in [
+        "Zapret TV Bridge (8080)",
+        "Zapret TV Bridge SOCKS5 (1080)",
+        "Zapret TV Bridge Telegram (1443)",
+        "Zapret TV Bridge - Block QUIC (UDP 443)",
+    ] {
+        let _ = Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                &format!("name={rule_name}"),
+            ])
+            .output();
+    }
     println!("\n[+] Все службы успешно остановлены и удалены из системы.\n");
     true
 }
@@ -1189,12 +1353,7 @@ pub fn cmd_status(base_dir: &Path) {
         println!("  PAC URL:        http://{}:8080/proxy.pac", local_ip);
         println!("  Smart TV:       IP {}  Порт 8080", local_ip);
         if !tg_secret.is_empty() {
-            let clean_secret = tg_secret.strip_prefix("dd").unwrap_or(&tg_secret);
-            let clean_secret = if clean_secret.len() >= 32 {
-                &clean_secret[..32]
-            } else {
-                clean_secret
-            };
+            let link_secret = format_telegram_secret(&tg_secret);
             let (tg_running, tg_pid) = is_tg_proxy_running(base_dir);
             let tg_tag = if tg_running {
                 if let Some(p) = tg_pid {
@@ -1206,8 +1365,8 @@ pub fn cmd_status(base_dir: &Path) {
                 " [ОСТАНОВЛЕН]".to_string()
             };
             println!(
-                "  Telegram (tgwsproxy): tg://proxy?server={}&port=1443&secret=dd{}{}",
-                local_ip, clean_secret, tg_tag
+                "  Telegram (tgwsproxy): tg://proxy?server={}&port=1443&secret={}{}",
+                local_ip, link_secret, tg_tag
             );
         }
     } else {
@@ -1384,7 +1543,7 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
     println!("    При включении ПК автоматически запускаются и служба Zapret, и шлюз для ТВ.\n");
 }
 
-/// Adds Windows Firewall rules for HTTP proxy (8080), SOCKS5 (1080), and Telegram (1443).
+/// Adds Windows Firewall rules for HTTP proxy (8080), SOCKS5 (1080), and Telegram (1443) on private LAN networks.
 pub fn cmd_firewall() {
     println!("[*] Настройка Брандмауэра Windows...");
     let rules = [
@@ -1394,25 +1553,29 @@ pub fn cmd_firewall() {
     ];
 
     for (name, port) in &rules {
+        let rule_arg = format!("name={name}");
         let _ = Command::new("netsh")
-            .args(&[
+            .args(["advfirewall", "firewall", "delete", "rule", &rule_arg])
+            .output();
+        let _ = Command::new("netsh")
+            .args([
                 "advfirewall",
                 "firewall",
                 "add",
                 "rule",
-                &format!("name={}", name),
+                &rule_arg,
                 "dir=in",
                 "action=allow",
                 "protocol=TCP",
-                &format!("localport={}", port),
-                "profile=private,public",
+                &format!("localport={port}"),
+                "profile=private",
             ])
             .output();
     }
 
     // Outbound rule: Block UDP 443 (QUIC / HTTP3) to prevent video streaming buffering stalls
     let _ = Command::new("netsh")
-        .args(&[
+        .args([
             "advfirewall",
             "firewall",
             "delete",
@@ -1421,7 +1584,7 @@ pub fn cmd_firewall() {
         ])
         .output();
     let _ = Command::new("netsh")
-        .args(&[
+        .args([
             "advfirewall",
             "firewall",
             "add",
@@ -1434,7 +1597,7 @@ pub fn cmd_firewall() {
         ])
         .output();
 
-    println!("[+] Правила Брандмауэра успешно добавлены (порты 8080, 1080, 1443 открыты, UDP 443/QUIC ограничен для плавного стриминга).");
+    println!("[+] Правила Брандмауэра успешно добавлены (порты 8080, 1080, 1443 открыты для домашней сети, UDP 443/QUIC ограничен для плавного стриминга).");
 }
 
 /// Clears Windows System Proxy for direct system connection.

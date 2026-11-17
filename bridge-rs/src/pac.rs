@@ -29,9 +29,11 @@ pub fn generate_served_pac(proxy_host: &str, proxy_port: u16, base_dir: &Path) -
     let host = usable_proxy_host(proxy_host, "127.0.0.1");
     let lists = base_dir.join("lists");
     let stamp = format!(
-        "{}|{}",
-        list_stamp(&lists.join("list-general.txt")),
-        list_stamp(&lists.join("list-general-user.txt"))
+        "{}|{}|{}|{}",
+        list_stamp(&lists.join("list-google.txt")),
+        list_stamp(&lists.join("list-general-user.txt")),
+        list_stamp(&lists.join("list-exclude.txt")),
+        list_stamp(&lists.join("list-exclude-user.txt"))
     );
     let (targets, excludes) = cached_tables(&lists, &stamp);
     render_pac(&host, proxy_port, &targets, &excludes)
@@ -94,7 +96,7 @@ fn render_pac(host: &str, port: u16, target_object: &str, exclude_object: &str) 
     if (bridgeListed(h, BRIDGE_DIRECT_SUFFIXES) || bridgeObj(h, BRIDGE_FILE_EXCLUDES)) return "DIRECT";
     if (bridgeListed(h, BRIDGE_PROXY_SUFFIXES) || bridgeObj(h, BRIDGE_FILE_TARGETS)) return proxy;
     if (h.indexOf("animevost") >= 0 || h.indexOf("anilibria") >= 0 || h.indexOf("animedia") >= 0 || h.indexOf("jut.su") >= 0 || h.indexOf("animego") >= 0 || h.indexOf("rezka") >= 0) return proxy;
-    return proxy;
+    return "DIRECT";
 }}
 function bridgePlain(h) {{ return h.indexOf(".") < 0 && h.indexOf(":") < 0; }}
 function bridgeEnds(h, suf) {{ return h.length >= suf.length && h.substring(h.length - suf.length) === suf; }}

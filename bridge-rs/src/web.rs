@@ -211,6 +211,58 @@ impl WebConfig {
 pub struct WebState {
     pub metrics: Arc<ProxyMetrics>,
     pub config: WebConfig,
+    contours_cache: parking_lot::RwLock<Option<(Instant, ContoursStatus)>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ContoursStatus {
+    pub zapret_active: bool,
+    pub zapret_strategy: String,
+    pub gateway_active: bool,
+    pub http_port: u16,
+    pub socks5_port: u16,
+    pub socks5_active: bool,
+    pub tg_active: bool,
+    pub tg_port: u16,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SystemStatusResponse {
+    pub contours: ContoursStatus,
+    pub stats: StatsResponse,
+}
+
+impl WebState {
+    pub fn contours_status(&self) -> ContoursStatus {
+        const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2);
+        {
+            let guard = self.contours_cache.read();
+            if let Some((taken_at, ref cached)) = *guard {
+                if taken_at.elapsed() < CACHE_TTL {
+                    return cached.clone();
+                }
+            }
+        }
+
+        let (zapret_active, zapret_strategy) =
+            crate::menu::query_zapret_service_fast().unwrap_or((false, String::new()));
+        let socks5_active = crate::access::is_tcp_port_listening(1080);
+        let tg_active = crate::access::is_tcp_port_listening(self.config.tg_port);
+
+        let fresh = ContoursStatus {
+            zapret_active,
+            zapret_strategy,
+            gateway_active: true,
+            http_port: self.config.proxy_port,
+            socks5_port: 1080,
+            socks5_active,
+            tg_active,
+            tg_port: self.config.tg_port,
+        };
+
+        *self.contours_cache.write() = Some((Instant::now(), fresh.clone()));
+        fresh
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -235,7 +287,11 @@ pub struct StatsResponse {
 
 /// Creates the Axum router for local requests.
 pub fn create_web_router(metrics: Arc<ProxyMetrics>, config: WebConfig) -> Router {
-    let state = Arc::new(WebState { metrics, config });
+    let state = Arc::new(WebState {
+        metrics,
+        config,
+        contours_cache: parking_lot::RwLock::new(None),
+    });
     Router::new()
         .route("/health", get(health_handler))
         .route("/health/", get(health_handler))
@@ -267,6 +323,8 @@ pub fn create_web_router(metrics: Arc<ProxyMetrics>, config: WebConfig) -> Route
         .route("/api/stats", get(stats_handler))
         .route("/api/stats/", get(stats_handler))
         .route("/stats", get(stats_handler))
+        .route("/api/status", get(system_status_handler))
+        .route("/api/status/", get(system_status_handler))
         .route("/", get(dashboard_handler))
         .route("/index.html", get(dashboard_handler))
         .fallback(fallback_404)
@@ -413,6 +471,23 @@ async fn stats_handler(State(state): State<Arc<WebState>>) -> Json<StatsResponse
     })
 }
 
+async fn system_status_handler(State(state): State<Arc<WebState>>) -> Json<SystemStatusResponse> {
+    let snap = state.metrics.snapshot();
+    let uptime = state.config.start_time.elapsed().as_secs();
+    let contours = state.contours_status();
+    Json(SystemStatusResponse {
+        contours,
+        stats: StatsResponse {
+            active_connections: snap.active_connections,
+            total_connections: snap.total_connections,
+            bytes_client_to_remote: snap.bytes_client_to_remote,
+            bytes_remote_to_client: snap.bytes_remote_to_client,
+            errors_count: snap.errors_count,
+            uptime_seconds: uptime,
+        },
+    })
+}
+
 async fn dashboard_handler(State(state): State<Arc<WebState>>, req: Request) -> Html<String> {
     let host_header = req.headers().get("host").and_then(|v| v.to_str().ok());
     let (host, port) = pac::resolve_proxy_target(
@@ -424,6 +499,7 @@ async fn dashboard_handler(State(state): State<Arc<WebState>>, req: Request) -> 
 
     let snap = state.metrics.snapshot();
     let uptime = state.config.start_time.elapsed().as_secs();
+    let contours = state.contours_status();
     Html(render_dashboard_html(
         &host,
         port,
@@ -431,6 +507,7 @@ async fn dashboard_handler(State(state): State<Arc<WebState>>, req: Request) -> 
         &state.config.tg_secret,
         uptime,
         &snap,
+        &contours,
     ))
 }
 
@@ -543,6 +620,43 @@ pub async fn write_response<S: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn format_bytes_human(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let b = bytes as f64;
+    if bytes < 1024 {
+        format!("{bytes} Б")
+    } else if b < MB {
+        format!("{:.1} КБ", b / KB)
+    } else if b < GB {
+        format!("{:.2} МБ", b / MB)
+    } else {
+        format!("{:.2} ГБ", b / GB)
+    }
+}
+
+fn format_uptime_human(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}ч {m:02}м {s:02}с")
+    } else if m > 0 {
+        format!("{m}м {s:02}с")
+    } else {
+        format!("{s}с")
+    }
+}
+
 fn render_dashboard_html(
     ip: &str,
     proxy_port: u16,
@@ -550,14 +664,62 @@ fn render_dashboard_html(
     tg_secret: &str,
     uptime_secs: u64,
     metrics: &MetricsSnapshot,
+    contours: &ContoursStatus,
 ) -> String {
-    let clean_tg_secret = if tg_secret.starts_with("dd") || tg_secret.starts_with("ee") {
-        tg_secret.to_string()
-    } else if tg_secret.len() == 32 && tg_secret.chars().all(|c| c.is_ascii_hexdigit()) {
-        format!("dd{}", tg_secret)
+    let clean_tg_secret = crate::menu::format_telegram_secret(tg_secret);
+
+    let active_contours_count =
+        (contours.zapret_active as u8) + (contours.gateway_active as u8) + (contours.tg_active as u8);
+    let overall_badge_cls = if active_contours_count == 3 {
+        "badge"
     } else {
-        tg_secret.to_string()
+        "badge badge-warn"
     };
+    let overall_badge_text = format!("РАБОТАЕТ &bull; {active_contours_count}/3");
+
+    let zapret_cls = if contours.zapret_active {
+        "contour-pill on"
+    } else {
+        "contour-pill off"
+    };
+    let zapret_label = if contours.zapret_active {
+        if contours.zapret_strategy.is_empty() {
+            "АКТИВНА".to_string()
+        } else {
+            format!("АКТИВНА &bull; {}", escape_html(&contours.zapret_strategy))
+        }
+    } else if !contours.zapret_strategy.is_empty() {
+        format!(
+            "ОСТАНОВЛЕНА ({})",
+            escape_html(&contours.zapret_strategy)
+        )
+    } else {
+        "ОСТАНОВЛЕНА".to_string()
+    };
+
+    let gw_label = if contours.socks5_active {
+        format!(
+            "АКТИВЕН &bull; :{proxy_port} / SOCKS5 :{}",
+            contours.socks5_port
+        )
+    } else {
+        format!("АКТИВЕН &bull; :{proxy_port} (HTTP+SOCKS5)")
+    };
+
+    let tg_cls = if contours.tg_active {
+        "contour-pill on"
+    } else {
+        "contour-pill off"
+    };
+    let tg_label = if contours.tg_active {
+        format!("АКТИВЕН &bull; :{tg_port}")
+    } else {
+        format!("ОСТАНОВЛЕН &bull; :{tg_port}")
+    };
+
+    let uptime_human = format_uptime_human(uptime_secs);
+    let up_human = format_bytes_human(metrics.bytes_client_to_remote);
+    let down_human = format_bytes_human(metrics.bytes_remote_to_client);
 
     format!(
         r#"<!DOCTYPE html>
@@ -577,6 +739,7 @@ fn render_dashboard_html(
     --text-muted: #94a3b8;
     --border: #334155;
     --success: #10b981;
+    --warn: #f59e0b;
     --tg: #229ed9;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -634,6 +797,71 @@ fn render_dashboard_html(
     border-radius: 50%;
     background: var(--success);
     box-shadow: 0 0 8px var(--success);
+  }}
+  .badge.badge-warn {{
+    background: rgba(245, 158, 11, 0.16);
+    color: var(--warn);
+    border-color: var(--warn);
+  }}
+  .badge.badge-warn::before {{
+    background: var(--warn);
+    box-shadow: 0 0 8px var(--warn);
+  }}
+  .contours-box {{
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }}
+  .contour-row {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+    flex-wrap: wrap;
+  }}
+  .contour-name {{
+    color: #cbd5e1;
+    font-weight: 600;
+  }}
+  .contour-pill {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }}
+  .contour-pill::before {{
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+  }}
+  .contour-pill.on {{
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+  }}
+  .contour-pill.on::before {{
+    background: #10b981;
+    box-shadow: 0 0 6px #10b981;
+  }}
+  .contour-pill.off {{
+    background: rgba(245, 158, 11, 0.12);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+  }}
+  .contour-pill.off::before {{
+    background: #f59e0b;
   }}
   .desc {{
     font-size: 14px;
@@ -846,6 +1074,76 @@ function switchSupercellTab(tab) {{
   }}
 }}
 
+function formatBytes(b) {{
+  if (b < 1024) return b + ' Б';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' КБ';
+  if (b < 1073741824) return (b / 1048576).toFixed(2) + ' МБ';
+  return (b / 1073741824).toFixed(2) + ' ГБ';
+}}
+
+function formatUptime(secs) {{
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (h > 0) return h + 'ч ' + pad(m) + 'м ' + pad(s) + 'с';
+  if (m > 0) return m + 'м ' + pad(s) + 'с';
+  return s + 'с';
+}}
+
+function refreshSystemStatus() {{
+  fetch('/api/status', {{ cache: 'no-store' }})
+    .then((r) => r.ok ? r.json() : null)
+    .then((data) => {{
+      if (!data || !data.contours || !data.stats) return;
+      const c = data.contours;
+      const st = data.stats;
+      const count = (c.zapret_active ? 1 : 0) + (c.gateway_active ? 1 : 0) + (c.tg_active ? 1 : 0);
+
+      const badge = document.getElementById('overall-badge');
+      if (badge) {{
+        badge.className = count === 3 ? 'badge' : 'badge badge-warn';
+        badge.textContent = 'РАБОТАЕТ • ' + count + '/3';
+      }}
+
+      const zEl = document.getElementById('cnt-zapret');
+      if (zEl) {{
+        zEl.className = c.zapret_active ? 'contour-pill on' : 'contour-pill off';
+        if (c.zapret_active) {{
+          zEl.textContent = c.zapret_strategy ? ('АКТИВНА • ' + c.zapret_strategy) : 'АКТИВНА';
+        }} else {{
+          zEl.textContent = c.zapret_strategy ? ('ОСТАНОВЛЕНА (' + c.zapret_strategy + ')') : 'ОСТАНОВЛЕНА';
+        }}
+      }}
+
+      const gEl = document.getElementById('cnt-gateway');
+      if (gEl) {{
+        gEl.className = c.gateway_active ? 'contour-pill on' : 'contour-pill off';
+        gEl.textContent = c.socks5_active
+          ? ('АКТИВЕН • :' + c.http_port + ' / SOCKS5 :' + c.socks5_port)
+          : ('АКТИВЕН • :' + c.http_port + ' (HTTP+SOCKS5)');
+      }}
+
+      const tEl = document.getElementById('cnt-tg');
+      if (tEl) {{
+        tEl.className = c.tg_active ? 'contour-pill on' : 'contour-pill off';
+        tEl.textContent = (c.tg_active ? 'АКТИВЕН • :' : 'ОСТАНОВЛЕН • :') + c.tg_port;
+      }}
+
+      const upTimeEl = document.getElementById('stat-uptime');
+      if (upTimeEl) upTimeEl.textContent = formatUptime(st.uptime_seconds);
+      const actEl = document.getElementById('stat-active');
+      if (actEl) actEl.textContent = st.active_connections;
+      const totEl = document.getElementById('stat-total');
+      if (totEl) totEl.textContent = st.total_connections;
+      const bUp = document.getElementById('stat-up');
+      if (bUp) bUp.textContent = formatBytes(st.bytes_client_to_remote);
+      const bDown = document.getElementById('stat-down');
+      if (bDown) bDown.textContent = formatBytes(st.bytes_remote_to_client);
+    }})
+    .catch(() => {{}});
+}}
+
 document.addEventListener('DOMContentLoaded', () => {{
   const ua = navigator.userAgent || '';
   if (/iPhone|iPad|iPod/i.test(ua)) {{
@@ -853,6 +1151,7 @@ document.addEventListener('DOMContentLoaded', () => {{
   }} else {{
     switchSupercellTab('android');
   }}
+  setInterval(refreshSystemStatus, 3000);
 }});
 </script>
 </head>
@@ -861,11 +1160,27 @@ document.addEventListener('DOMContentLoaded', () => {{
   <div class="card">
     <div class="header">
       <h1>Zapret TV & Mobile Bridge</h1>
-      <span class="badge">РАБОТАЕТ</span>
+      <span id="overall-badge" class="{overall_badge_cls}">{overall_badge_text}</span>
     </div>
     <p class="desc">
       Локальный сетевой шлюз и прокси-мост с поддержкой <strong>Умной маршрутизации трафика</strong> (Smart Routing). Оптимизирует потоковое видео и медиа-сервисы через Zapret на ПК.
     </p>
+
+    <!-- Live 3-Contour System Status -->
+    <div class="contours-box">
+      <div class="contour-row">
+        <span class="contour-name">🛡️ Служба Zapret (DPI)</span>
+        <span id="cnt-zapret" class="{zapret_cls}">{zapret_label}</span>
+      </div>
+      <div class="contour-row">
+        <span class="contour-name">🌐 HTTP / SOCKS5 шлюз</span>
+        <span id="cnt-gateway" class="contour-pill on">{gw_label}</span>
+      </div>
+      <div class="contour-row">
+        <span class="contour-name">✈️ Telegram MTProto</span>
+        <span id="cnt-tg" class="{tg_cls}">{tg_label}</span>
+      </div>
+    </div>
 
     <!-- Section 1: PAC Autoconfig for iOS / macOS / Windows -->
     <div class="section">
@@ -1000,12 +1315,12 @@ document.addEventListener('DOMContentLoaded', () => {{
 
     <!-- Section 5: Telemetry Status Grid -->
     <div class="section">
-      <div class="section-title">5. Состояние и статистика (Uptime: {uptime}s)</div>
+      <div class="section-title">5. Состояние и статистика (Uptime: <span id="stat-uptime">{uptime_human}</span>)</div>
       <div class="stats-grid">
-        <div class="stat-box"><div class="stat-num">{active_conn}</div><div class="stat-label">Активных соединений</div></div>
-        <div class="stat-box"><div class="stat-num">{total_conn}</div><div class="stat-label">Всего соединений</div></div>
-        <div class="stat-box"><div class="stat-num">{bytes_up}</div><div class="stat-label">Отправлено (байт)</div></div>
-        <div class="stat-box"><div class="stat-num">{bytes_down}</div><div class="stat-label">Принято (байт)</div></div>
+        <div class="stat-box"><div id="stat-active" class="stat-num">{active_conn}</div><div class="stat-label">Активных соединений</div></div>
+        <div class="stat-box"><div id="stat-total" class="stat-num">{total_conn}</div><div class="stat-label">Всего соединений</div></div>
+        <div class="stat-box"><div id="stat-up" class="stat-num">{up_human}</div><div class="stat-label">Отправлено</div></div>
+        <div class="stat-box"><div id="stat-down" class="stat-num">{down_human}</div><div class="stat-label">Принято</div></div>
       </div>
     </div>
 
@@ -1020,11 +1335,18 @@ document.addEventListener('DOMContentLoaded', () => {{
         proxy_port = proxy_port,
         tg_port = tg_port,
         tg_secret = clean_tg_secret,
-        uptime = uptime_secs,
+        overall_badge_cls = overall_badge_cls,
+        overall_badge_text = overall_badge_text,
+        zapret_cls = zapret_cls,
+        zapret_label = zapret_label,
+        gw_label = gw_label,
+        tg_cls = tg_cls,
+        tg_label = tg_label,
+        uptime_human = uptime_human,
         active_conn = metrics.active_connections,
         total_conn = metrics.total_connections,
-        bytes_up = metrics.bytes_client_to_remote,
-        bytes_down = metrics.bytes_remote_to_client,
+        up_human = up_human,
+        down_human = down_human,
     )
 }
 
@@ -1143,6 +1465,29 @@ mod tests {
         assert!(html.contains("sc-tab-android"));
         assert!(html.contains("sc-tab-ios"));
         assert!(html.contains("Обновление 50%"));
+        assert!(html.contains("cnt-zapret"));
+        assert!(html.contains("cnt-gateway"));
+        assert!(html.contains("cnt-tg"));
+    }
+
+    #[tokio::test]
+    async fn test_create_web_router_system_status_contours() {
+        let metrics = Arc::new(ProxyMetrics::new());
+        let config = WebConfig::default_with_port(8080);
+        let router = create_web_router(metrics, config);
+
+        let req = Request::builder()
+            .uri("/api/status")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let parsed: SystemStatusResponse = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(parsed.contours.gateway_active);
+        assert_eq!(parsed.contours.http_port, 8080);
+        assert_eq!(parsed.contours.tg_port, 1443);
     }
 
     #[tokio::test]

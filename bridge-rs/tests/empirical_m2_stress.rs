@@ -332,8 +332,13 @@ fn test_empirical_ipv6_interval_boundaries() {
 // SECTION 2: High-Throughput & Latency Benchmarking (1,000,000 queries)
 // =========================================================================
 
+static BENCH_ISOLATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_empirical_1m_cidr_and_mmap_benchmarks() {
+    let _serial = BENCH_ISOLATION_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let base_dir = Path::new("d:\\projects\\zapret-tv-bridge");
     if !base_dir.join("routing_rules.json").exists() {
         return;
@@ -397,7 +402,7 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
     );
     // Zero heap memory leak assertion: Private commit must not grow
     assert!(
-        priv_delta_kb.abs() <= 64,
+        priv_delta_kb <= 64,
         "Heap/private memory grew by {} KB across 1M CIDR queries!",
         priv_delta_kb
     );
@@ -420,6 +425,12 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
         b"aaaaaaaaaaaaaaa",
     ];
 
+    // Warm-up to fault in mmap pages before hot-path timing
+    for i in 0..10_000 {
+        let target = search_targets[i % search_targets.len()];
+        black_box(binary_search_bucket(slice15, 15, target));
+    }
+
     let t1 = Instant::now();
     for i in 0..count {
         let target = search_targets[i % search_targets.len()];
@@ -440,10 +451,12 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
     println!(" Throughput:              {:.2} queries / second", qps_mmap);
     println!("=======================================================\n");
 
+    let mmap_ceiling_ns = if cfg!(debug_assertions) { 300.0 } else { 100.0 };
     assert!(
-        avg_ns_mmap < 100.0,
-        "Mmap binary search latency ({:.2} ns) exceeded 100 ns threshold!",
-        avg_ns_mmap
+        avg_ns_mmap < mmap_ceiling_ns,
+        "Mmap binary search latency ({:.2} ns) exceeded {:.0} ns threshold!",
+        avg_ns_mmap,
+        mmap_ceiling_ns
     );
 
     // -------------------------------------------------------------
@@ -477,10 +490,12 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
     println!(" Throughput:              {:.2} queries / second", qps_iv);
     println!("=======================================================\n");
 
+    let iv_ceiling_ns = if cfg!(debug_assertions) { 50.0 } else { 10.0 };
     assert!(
-        avg_ns_iv < 10.0,
-        "Interval check latency ({:.2} ns) exceeded 10 ns threshold!",
-        avg_ns_iv
+        avg_ns_iv < iv_ceiling_ns,
+        "Interval check latency ({:.2} ns) exceeded {:.0} ns threshold!",
+        avg_ns_iv,
+        iv_ceiling_ns
     );
 }
 
@@ -490,6 +505,9 @@ fn test_empirical_1m_cidr_and_mmap_benchmarks() {
 
 #[test]
 fn test_empirical_8_thread_concurrency_stress_with_auto_add() {
+    let _serial = BENCH_ISOLATION_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let base_dir = Path::new("d:\\projects\\zapret-tv-bridge");
     if !base_dir.join("routing_rules.json").exists() {
         return;

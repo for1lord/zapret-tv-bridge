@@ -1048,9 +1048,9 @@ impl SmartRouter {
                             self.header = Some(header);
                             self.mmap = Some(mmap);
 
-                            // Extract standalone database IPv4 addresses from JSON if database_v4 empty
-                            if self.database_v4.is_empty() && json_path.exists() {
-                                self.extract_database_ips(&json_path);
+                            // Extract standalone database IPv4 addresses directly from sorted mmap prefix (zero JSON heap bloat)
+                            if self.database_v4.is_empty() {
+                                self.extract_database_ips_from_mmap();
                             }
 
                             println!(
@@ -1080,37 +1080,47 @@ impl SmartRouter {
         eprintln!("[SmartRouter] Warning: routing database not loaded.");
     }
 
-    /// Extracts standalone IPv4 addresses from rules JSON for fast containment.
-    fn extract_database_ips<P: AsRef<Path>>(&mut self, json_path: P) {
-        if let Ok(file) = File::open(json_path) {
-            let reader = BufReader::new(file);
-            if let Ok(raw_map) = serde_json::from_reader::<_, BTreeMap<String, String>>(reader) {
-                let mut db_ips = Vec::new();
-                for (k, v) in raw_map {
-                    if let Ok(word_len) = k.parse::<usize>() {
-                        if (7..=15).contains(&word_len) {
-                            let bytes = v.as_bytes();
-                            let count = bytes.len() / word_len;
-                            for i in 0..count {
-                                let offset = i * word_len;
-                                if let Ok(s) =
-                                    std::str::from_utf8(&bytes[offset..offset + word_len])
-                                {
-                                    if let Ok(ipv4) = s.parse::<Ipv4Addr>() {
-                                        let addr = u32::from(ipv4);
-                                        db_ips.push(Ipv4Interval {
-                                            start: addr,
-                                            end: addr,
-                                        });
-                                    }
-                                }
-                            }
-                        }
+    /// Extracts standalone IPv4 literals from the sorted numeric prefix of mmap buckets 7..=15.
+    /// Because buckets are sorted lexicographically and digits ('0'..'9') precede letters ('a'..'z'),
+    /// scanning stops at the first byte > b'9', faulting only a few kilobytes of pages.
+    fn extract_database_ips_from_mmap(&mut self) {
+        let Some(mmap) = &self.mmap else {
+            return;
+        };
+        let mut db_ips = Vec::new();
+        for word_len in 7..=15 {
+            let entry = self.bucket_table[word_len];
+            if entry.byte_len == 0 {
+                continue;
+            }
+            let start = entry.offset as usize;
+            let end = start + entry.byte_len as usize;
+            if end > mmap.len() {
+                continue;
+            }
+            let bucket = &mmap[start..end];
+            let count = bucket.len() / word_len;
+            for i in 0..count {
+                let off = i * word_len;
+                let word = &bucket[off..off + word_len];
+                if word[0] > b'9' {
+                    break;
+                }
+                if word[0] < b'0' {
+                    continue;
+                }
+                if let Ok(s) = std::str::from_utf8(word) {
+                    if let Ok(ipv4) = s.parse::<Ipv4Addr>() {
+                        let addr = u32::from(ipv4);
+                        db_ips.push(Ipv4Interval {
+                            start: addr,
+                            end: addr,
+                        });
                     }
                 }
-                self.database_v4 = merge_ipv4_intervals(db_ips);
             }
         }
+        self.database_v4 = merge_ipv4_intervals(db_ips);
     }
 
     /// Compiles rules JSON and list directory files into Format v2 binary cache with atomic replacement.
@@ -1344,7 +1354,7 @@ impl SmartRouter {
         if bin_path.exists() {
             let _ = fs::remove_file(bin_path);
         }
-        if let Err(_) = fs::rename(&tmp_path, bin_path) {
+        if fs::rename(&tmp_path, bin_path).is_err() {
             fs::copy(&tmp_path, bin_path)?;
             let _ = fs::remove_file(&tmp_path);
         }

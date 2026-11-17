@@ -556,7 +556,7 @@ async fn test_empirical_rapid_request_memory_stability() {
 
     // Memory growth must be bounded (less than 10 MB drift for 6,000 requests)
     assert!(
-        commit_diff.abs() < 10.0,
+        commit_diff < 10.0,
         "Excessive commit memory delta ({:.2} MB) suggests memory leak",
         commit_diff
     );

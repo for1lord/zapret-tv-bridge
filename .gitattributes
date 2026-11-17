@@ -1,0 +1,5 @@
+# Enforce CRLF for Windows scripts so cmd.exe / wscript never break on byte offsets
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.reg text eol=crlf
+*.vbs text eol=crlf

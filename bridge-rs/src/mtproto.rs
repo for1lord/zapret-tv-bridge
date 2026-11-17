@@ -883,17 +883,18 @@ where
         )
     })?;
 
-    let dc_idx: i16 = if parsed.is_media {
-        -(parsed.dc_id as i16)
+    let raw_dc: i16 = if parsed.is_test_dc {
+        (parsed.dc_id + 10000) as i16
     } else {
         parsed.dc_id as i16
     };
+    let dc_idx: i16 = if parsed.is_media { -raw_dc } else { raw_dc };
 
     let relay_init = generate_relay_init(&parsed.proto_tag, dc_idx);
     let crypto_ctx = build_crypto_ctx(&parsed.dec_prekey_and_iv, &secret, &relay_init);
     let (mut c2u_crypto, mut u2c_crypto) = crypto_ctx.split();
 
-    if upstream_override.is_none() {
+    if upstream_override.is_none() && !parsed.is_test_dc {
         if let Some(mut ws) = connect_telegram_ws(parsed.dc_id, parsed.is_media).await {
             if ws.send_binary(&relay_init).await.is_ok() {
                 return relay_via_websocket(
@@ -912,16 +913,28 @@ where
     let target_addr =
         upstream_override.unwrap_or_else(|| get_dc_address(parsed.dc_id, parsed.is_test_dc));
 
-    // Attempt direct TCP upstream relay first
-    let mut upstream = match TcpStream::connect(target_addr).await {
-        Ok(s) => s,
-        Err(e) => {
+    // Attempt direct TCP upstream relay with bounded connect timeout
+    let mut upstream = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        TcpStream::connect(target_addr),
+    )
+    .await
+    {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
             metrics.inc_errors();
             return Err(e);
         }
+        Err(_) => {
+            metrics.inc_errors();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Telegram DC direct TCP connect timed out",
+            ));
+        }
     };
 
-    crate::proxy::tune_socket(&mut upstream);
+    crate::proxy::tune_socket(&upstream);
 
     // Send the 64-byte relay_init handshake to the upstream server
     upstream.write_all(&relay_init).await?;
@@ -1052,10 +1065,20 @@ async fn connect_telegram_ws(
         let Some(outbound) = crate::dns::connect_to_remote(&domain, 443, false).await else {
             continue;
         };
-        let Ok(tls) = connector.connect(domain.as_str(), outbound.stream).await else {
+        let Ok(Ok(tls)) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connector.connect(domain.as_str(), outbound.stream),
+        )
+        .await
+        else {
             continue;
         };
-        if let Ok(ws) = RawWebSocket::handshake(tls, &domain, "/apiws").await {
+        if let Ok(Ok(ws)) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            RawWebSocket::handshake(tls, &domain, "/apiws"),
+        )
+        .await
+        {
             return Some(ws);
         }
     }

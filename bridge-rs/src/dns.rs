@@ -161,7 +161,8 @@ pub fn is_valid_candidate_ip(ip: IpAddr) -> bool {
     }
 }
 
-const DNS_QUERY_ID: u16 = 0x1234;
+/// Delay before launching the next fallback IP in Happy Eyeballs connection racing.
+const HAPPY_EYEBALLS_DELAY: Duration = Duration::from_millis(150);
 
 /// One address to try, and whether it may be cached before any payload arrives.
 #[derive(Clone, Copy, Debug)]
@@ -179,9 +180,10 @@ pub struct Outbound {
     pub confirm_cache: bool,
 }
 
-fn build_dns_query(hostname: &str) -> Option<Vec<u8>> {
+fn build_dns_query(hostname: &str) -> Option<(u16, Vec<u8>)> {
+    let query_id: u16 = rand::random();
     let mut packet = Vec::with_capacity(512);
-    packet.extend_from_slice(&DNS_QUERY_ID.to_be_bytes());
+    packet.extend_from_slice(&query_id.to_be_bytes());
     // RD=1, one question.
     packet.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     for part in hostname.split('.') {
@@ -194,7 +196,7 @@ fn build_dns_query(hostname: &str) -> Option<Vec<u8>> {
     }
     packet.push(0x00);
     packet.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
-    Some(packet)
+    Some((query_id, packet))
 }
 
 /// Skips a domain name. A compression pointer ends the name on the wire.
@@ -282,7 +284,7 @@ pub fn parse_dns_a_answers(buf: &[u8], expected_id: u16) -> Option<Vec<Ipv4Addr>
 /// Queries a public DNS server directly over TCP (RFC 7766) for IPv4 (A) records.
 /// Avoids ISP UDP 53 interception and spoofed NXDOMAIN / blackhole responses.
 pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
-    let packet = build_dns_query(hostname)?;
+    let (query_id, packet) = build_dns_query(hostname)?;
     let target = format!("{server_ip}:53");
     let mut stream = timeout(Duration::from_millis(1500), TcpStream::connect(&target))
         .await
@@ -305,7 +307,7 @@ pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Ad
         .ok()?
         .ok()?;
     let resp_len = u16::from_be_bytes(len_buf) as usize;
-    if resp_len < 12 || resp_len > 4096 {
+    if !(12..=4096).contains(&resp_len) {
         return None;
     }
 
@@ -314,25 +316,30 @@ pub async fn query_dns_tcp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Ad
         .await
         .ok()?
         .ok()?;
-    parse_dns_a_answers(&buf, DNS_QUERY_ID)
+    parse_dns_a_answers(&buf, query_id)
 }
 
 /// Queries a public DNS server directly over UDP for IPv4 (A) records.
 pub async fn query_dns_udp(server_ip: &str, hostname: &str) -> Option<Vec<Ipv4Addr>> {
-    let packet = build_dns_query(hostname)?;
+    let (query_id, packet) = build_dns_query(hostname)?;
+    let target: SocketAddr = format!("{server_ip}:53").parse().ok()?;
     let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()?;
-    let target = format!("{server_ip}:53");
-    socket.send_to(&packet, &target).await.ok()?;
+    socket.send_to(&packet, target).await.ok()?;
 
     let mut buf = [0u8; 1024];
-    let (len, _) = timeout(Duration::from_millis(1500), socket.recv_from(&mut buf))
-        .await
-        .ok()?
-        .ok()?;
-    if len < 12 {
-        return None;
-    }
-    parse_dns_a_answers(&buf[..len], DNS_QUERY_ID)
+    timeout(Duration::from_millis(1500), async {
+        loop {
+            let (len, from_addr) = socket.recv_from(&mut buf).await.ok()?;
+            if from_addr != target || len < 12 {
+                continue;
+            }
+            if let Some(ans) = parse_dns_a_answers(&buf[..len], query_id) {
+                return Some(ans);
+            }
+        }
+    })
+    .await
+    .ok()?
 }
 
 fn push_candidate(
@@ -341,7 +348,10 @@ fn push_candidate(
     confirm_before_cache: bool,
     allow_local: bool,
 ) {
-    if !is_valid_candidate_ip(ip) || !upstream_allowed(ip, allow_local) || out.iter().any(|c| c.ip == ip) {
+    if !is_valid_candidate_ip(ip)
+        || !upstream_allowed(ip, allow_local)
+        || out.iter().any(|c| c.ip == ip)
+    {
         return;
     }
     // Filter IPv6 candidates when host has no working IPv6 route
@@ -369,11 +379,41 @@ async fn lookup_system(hostname: &str, allow_local: bool, out: &mut Vec<Candidat
     }
 }
 
+/// Races two DNS futures so a fast valid answer does not wait 1500ms if the peer server drops packets.
+async fn race_dns_pair<F1, F2>(f1: F1, f2: F2) -> (Option<Vec<Ipv4Addr>>, Option<Vec<Ipv4Addr>>)
+where
+    F1: std::future::Future<Output = Option<Vec<Ipv4Addr>>>,
+    F2: std::future::Future<Output = Option<Vec<Ipv4Addr>>>,
+{
+    tokio::pin!(f1);
+    tokio::pin!(f2);
+
+    tokio::select! {
+        r1 = &mut f1 => {
+            let r2 = if r1.is_some() {
+                timeout(Duration::from_millis(120), &mut f2).await.ok().flatten()
+            } else {
+                f2.await
+            };
+            (r1, r2)
+        }
+        r2 = &mut f2 => {
+            let r1 = if r2.is_some() {
+                timeout(Duration::from_millis(120), &mut f1).await.ok().flatten()
+            } else {
+                f1.await
+            };
+            (r1, r2)
+        }
+    }
+}
+
 async fn lookup_public(hostname: &str, allow_local: bool, out: &mut Vec<Candidate>) {
-    let (res_cf, res_goog) = tokio::join!(
+    let (res_cf, res_goog) = race_dns_pair(
         query_dns_tcp("1.1.1.1", hostname),
-        query_dns_tcp("8.8.8.8", hostname)
-    );
+        query_dns_tcp("8.8.8.8", hostname),
+    )
+    .await;
 
     let mut found = false;
     if let Some(ips) = res_cf {
@@ -393,10 +433,11 @@ async fn lookup_public(hostname: &str, allow_local: bool, out: &mut Vec<Candidat
         return;
     }
 
-    let (res_cf_udp, res_goog_udp) = tokio::join!(
+    let (res_cf_udp, res_goog_udp) = race_dns_pair(
         query_dns_udp("1.1.1.1", hostname),
-        query_dns_udp("8.8.8.8", hostname)
-    );
+        query_dns_udp("8.8.8.8", hostname),
+    )
+    .await;
 
     if let Some(ips) = res_cf_udp {
         for ip4 in ips {
@@ -430,11 +471,15 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         return out;
     }
 
-    let mut candidates = Vec::new();
     if let Some(cached_ip) = GLOBAL_DNS_CACHE.get(hostname) {
-        push_candidate(&mut candidates, cached_ip, false, allow_local);
+        let mut out = Vec::with_capacity(1);
+        push_candidate(&mut out, cached_ip, false, allow_local);
+        if !out.is_empty() {
+            return out;
+        }
     }
 
+    let mut candidates = Vec::new();
     let host_lower = hostname.to_ascii_lowercase();
     if host_lower == "rt.pornhub.org"
         || host_lower == "pornhub.com"
@@ -446,7 +491,7 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         // 66.254.114.40 is the verified, 100% responsive Anycast node returning 200 OK (.41 is dropped, .42 is 404/403 openresty, .39 is tube8)
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 114, 40)), false, allow_local);
     } else if host_lower.contains("hembed.com") {
-        // High-speed verified CDN77 Anycast nodes serving hanime1.me media (bypassing blackholed 37.19.202.x)
+        // High-speed verified CDN77 Anycast nodes serving hanime1.me media (avoiding blackholed 37.19.202.x)
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 5)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 6)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(195, 181, 172, 5)), false, allow_local);
@@ -459,7 +504,7 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 122, 16)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(66, 254, 122, 20)), false, allow_local);
     } else if host_lower.contains("pix-cdn77") {
-        // Fast, valid European CDN77 Anycast nodes (bypassing ISP hijacked domestic caches and distant Singapore nodes)
+        // Fast, valid European CDN77 Anycast nodes (avoiding hijacked domestic caches and distant Singapore nodes)
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 209)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(89, 222, 125, 215)), false, allow_local);
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(185, 59, 222, 14)), false, allow_local);
@@ -477,12 +522,17 @@ async fn resolve_candidates(hostname: &str, allow_local: bool) -> Vec<Candidate>
         push_candidate(&mut candidates, IpAddr::V4(std::net::Ipv4Addr::new(185, 229, 190, 147)), false, allow_local);
     }
 
-    lookup_public(hostname, allow_local, &mut candidates).await;
+    let mut public_candidates = Vec::new();
     let mut system = Vec::new();
-    lookup_system(hostname, allow_local, &mut system).await;
+    tokio::join!(
+        lookup_public(hostname, allow_local, &mut public_candidates),
+        lookup_system(hostname, allow_local, &mut system)
+    );
+    for c in public_candidates {
+        push_candidate(&mut candidates, c.ip, c.confirm_before_cache, allow_local);
+    }
     // Keep public answers even when the ISP resolver returns a long CDN list.
-    candidates = select_candidates(candidates, system);
-    candidates
+    select_candidates(candidates, system)
 }
 
 fn select_candidates(mut public: Vec<Candidate>, system: Vec<Candidate>) -> Vec<Candidate> {
@@ -521,22 +571,28 @@ async fn connect_one(ip: IpAddr, port: u16) -> Option<TcpStream> {
     let target = SocketAddr::new(ip, port);
     match timeout(Duration::from_millis(2500), TcpStream::connect(target)).await {
         Ok(Ok(stream)) => {
-            eprintln!("[DNS] connect_one to {}:{} SUCCESS", ip, port);
+            if crate::logger::verbose_logging_enabled() {
+                eprintln!("[DNS] connect_one to {}:{} SUCCESS", ip, port);
+            }
             tune_socket(&stream);
             Some(stream)
         }
         Ok(Err(e)) => {
-            eprintln!("[DNS] connect_one to {}:{} ERROR: {}", ip, port, e);
+            if crate::logger::verbose_logging_enabled() {
+                eprintln!("[DNS] connect_one to {}:{} ERROR: {}", ip, port, e);
+            }
             None
         }
         Err(_) => {
-            eprintln!("[DNS] connect_one to {}:{} TIMED OUT", ip, port);
+            if crate::logger::verbose_logging_enabled() {
+                eprintln!("[DNS] connect_one to {}:{} TIMED OUT", ip, port);
+            }
             None
         }
     }
 }
 
-/// Connects to a remote host across candidate IPs at once.
+/// Connects to a remote host using in-memory DNS cache fast-path and staggered Happy Eyeballs racing.
 ///
 /// `allow_local` permits a loopback upstream. Private and link-local addresses
 /// stay closed. Public-resolver answers are cached immediately. System-resolver
@@ -554,31 +610,101 @@ pub async fn connect_to_remote(hostname: &str, port: u16, allow_local: bool) -> 
         });
     }
 
+    // Fast-path: attempt cached IP directly with zero network DNS queries
+    if let Some(cached_ip) = GLOBAL_DNS_CACHE.get(hostname) {
+        if is_valid_candidate_ip(cached_ip) && upstream_allowed(cached_ip, allow_local) {
+            if let Some(stream) = connect_one(cached_ip, port).await {
+                return Some(Outbound {
+                    stream,
+                    ip: cached_ip,
+                    confirm_cache: false,
+                });
+            }
+        }
+        GLOBAL_DNS_CACHE.remove(hostname);
+    }
+
     let candidates = resolve_candidates(hostname, allow_local).await;
-    eprintln!("[DNS] connect_to_remote for {hostname}:{port}: {} candidates: {:?}", candidates.len(), candidates.iter().map(|c| c.ip).collect::<Vec<_>>());
+    if crate::logger::verbose_logging_enabled() {
+        eprintln!(
+            "[DNS] connect_to_remote for {hostname}:{port}: {} candidates: {:?}",
+            candidates.len(),
+            candidates.iter().map(|c| c.ip).collect::<Vec<_>>()
+        );
+    }
     if candidates.is_empty() {
         return None;
     }
 
+    // Staggered Happy Eyeballs (RFC 8305): start primary candidate immediately,
+    // launching subsequent candidates every 150ms (or immediately on fast error).
     let mut pending = JoinSet::new();
-    for candidate in candidates {
-        pending.spawn(async move {
-            let stream = connect_one(candidate.ip, port).await?;
-            Some((stream, candidate))
-        });
-    }
+    let mut next_idx = 0usize;
 
-    while let Some(joined) = pending.join_next().await {
-        if let Ok(Some((stream, candidate))) = joined {
-            pending.abort_all();
-            if !candidate.confirm_before_cache {
-                GLOBAL_DNS_CACHE.insert(hostname, candidate.ip);
+    let spawn_next = |pending: &mut JoinSet<Option<(TcpStream, Candidate)>>, cand: Candidate| {
+        pending.spawn(async move {
+            let stream = connect_one(cand.ip, port).await?;
+            Some((stream, cand))
+        });
+    };
+
+    spawn_next(&mut pending, candidates[0]);
+    next_idx += 1;
+
+    loop {
+        if pending.is_empty() {
+            if next_idx < candidates.len() {
+                spawn_next(&mut pending, candidates[next_idx]);
+                next_idx += 1;
+            } else {
+                break;
             }
-            return Some(Outbound {
-                stream,
-                ip: candidate.ip,
-                confirm_cache: candidate.confirm_before_cache,
-            });
+        }
+
+        if next_idx < candidates.len() {
+            tokio::select! {
+                joined = pending.join_next() => {
+                    match joined {
+                        Some(Ok(Some((stream, candidate)))) => {
+                            pending.abort_all();
+                            if !candidate.confirm_before_cache {
+                                GLOBAL_DNS_CACHE.insert(hostname, candidate.ip);
+                            }
+                            return Some(Outbound {
+                                stream,
+                                ip: candidate.ip,
+                                confirm_cache: candidate.confirm_before_cache,
+                            });
+                        }
+                        Some(_) => {
+                            // Fast failure on current attempt: launch next candidate immediately
+                            spawn_next(&mut pending, candidates[next_idx]);
+                            next_idx += 1;
+                        }
+                        None => {}
+                    }
+                }
+                _ = tokio::time::sleep(HAPPY_EYEBALLS_DELAY) => {
+                    spawn_next(&mut pending, candidates[next_idx]);
+                    next_idx += 1;
+                }
+            }
+        } else {
+            match pending.join_next().await {
+                Some(Ok(Some((stream, candidate)))) => {
+                    pending.abort_all();
+                    if !candidate.confirm_before_cache {
+                        GLOBAL_DNS_CACHE.insert(hostname, candidate.ip);
+                    }
+                    return Some(Outbound {
+                        stream,
+                        ip: candidate.ip,
+                        confirm_cache: candidate.confirm_before_cache,
+                    });
+                }
+                Some(_) => continue,
+                None => break,
+            }
         }
     }
 

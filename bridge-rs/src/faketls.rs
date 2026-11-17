@@ -422,7 +422,12 @@ pub async fn proxy_to_masking_domain(
     domain: &str,
 ) -> io::Result<()> {
     let target = format!("{}:443", domain);
-    let mut upstream = TcpStream::connect(&target).await?;
+    let mut upstream = tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        TcpStream::connect(&target),
+    )
+    .await
+    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Masking domain connect timed out"))??;
 
     if !initial_data.is_empty() {
         upstream.write_all(initial_data).await?;
@@ -451,12 +456,18 @@ pub async fn run_tg_gateway(config: TgGatewayConfig, metrics: Arc<ProxyMetrics>)
         let config_clone = config.clone();
 
         tokio::spawn(async move {
+            if !crate::access::peer_allowed(remote_addr) {
+                metrics_clone.inc_errors();
+                return;
+            }
             let _guard = metrics_clone.connection_guard();
             if let Err(e) =
                 handle_inbound_connection(client_stream, remote_addr, config_clone, metrics_clone)
                     .await
             {
-                eprintln!("[TgGateway] Connection {remote_addr} ended with notice: {e}");
+                if crate::logger::verbose_logging_enabled() {
+                    eprintln!("[TgGateway] Connection {remote_addr} ended with notice: {e}");
+                }
             }
         });
     }
@@ -469,7 +480,7 @@ async fn handle_inbound_connection(
     config: TgGatewayConfig,
     metrics: Arc<ProxyMetrics>,
 ) -> io::Result<()> {
-    crate::proxy::tune_socket(&mut stream);
+    crate::proxy::tune_socket(&stream);
 
     // Read the initial byte with a 10s handshake timeout
     let mut initial_byte = [0u8; 1];
@@ -484,18 +495,28 @@ async fn handle_inbound_connection(
     }
 
     if initial_byte[0] == TLS_RECORD_HANDSHAKE {
-        // 1. Inbound TLS Record: Read remaining 4 header bytes
-        let mut hdr_rest = [0u8; 4];
-        stream.read_exact(&mut hdr_rest).await?;
-        let rec_len = u16::from_be_bytes([hdr_rest[2], hdr_rest[3]]) as usize;
+        // 1. Inbound TLS Record: Read remaining header and body within 10s handshake deadline
+        let client_hello = tokio::time::timeout(tokio::time::Duration::from_secs(10), async {
+            let mut hdr_rest = [0u8; 4];
+            stream.read_exact(&mut hdr_rest).await?;
+            let rec_len = u16::from_be_bytes([hdr_rest[2], hdr_rest[3]]) as usize;
+            if rec_len > 18432 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "ClientHello record exceeds maximum fragment size",
+                ));
+            }
+            let mut rec_body = vec![0u8; rec_len];
+            stream.read_exact(&mut rec_body).await?;
 
-        let mut rec_body = vec![0u8; rec_len];
-        stream.read_exact(&mut rec_body).await?;
-
-        let mut client_hello = Vec::with_capacity(5 + rec_len);
-        client_hello.push(initial_byte[0]);
-        client_hello.extend_from_slice(&hdr_rest);
-        client_hello.extend_from_slice(&rec_body);
+            let mut ch = Vec::with_capacity(5 + rec_len);
+            ch.push(initial_byte[0]);
+            ch.extend_from_slice(&hdr_rest);
+            ch.extend_from_slice(&rec_body);
+            Ok::<Vec<u8>, io::Error>(ch)
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "FakeTLS ClientHello timed out"))??;
 
         match verify_client_hello(&client_hello, &config.secret) {
             Some(verified) => {
@@ -511,9 +532,16 @@ async fn handle_inbound_connection(
                 // Wrap stream in FakeTlsStream
                 let mut tls_stream = FakeTlsStream::new(stream);
 
-                // Read 64-byte Obfs2 handshake header
+                // Read 64-byte Obfs2 handshake header with 10s timeout
                 let mut obfs_hdr = [0u8; 64];
-                tls_stream.read_exact(&mut obfs_hdr).await?;
+                tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    tls_stream.read_exact(&mut obfs_hdr),
+                )
+                .await
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::TimedOut, "Obfs2 header read timed out")
+                })??;
 
                 // Relay into MTProto handler
                 crate::mtproto::handle_mtproto_stream(
@@ -546,9 +574,15 @@ async fn handle_inbound_connection(
         let _ = stream.flush().await;
         Ok(())
     } else {
-        // Plain direct MTProto Obfs2 connection without FakeTLS wrapper
+        // Plain direct MTProto Obfs2 connection without FakeTLS wrapper (10s timeout)
         let mut rest_handshake = [0u8; 63];
-        stream.read_exact(&mut rest_handshake).await?;
+        tokio::time::timeout(
+            tokio::time::Duration::from_secs(10),
+            stream.read_exact(&mut rest_handshake),
+        )
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Direct Obfs2 handshake timed out"))??;
+
         let mut full_handshake = [0u8; 64];
         full_handshake[0] = initial_byte[0];
         full_handshake[1..].copy_from_slice(&rest_handshake);

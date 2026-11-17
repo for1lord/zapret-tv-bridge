@@ -395,8 +395,12 @@ pub async fn handle_socks5_stream(
         }
     }
 
-    // 4. Outbound Connection
-    let remote_conn = connect_to_remote(&host, port, allow_local).await;
+    // 4. Outbound Connection (with stale DNS cache retry)
+    let mut remote_conn = connect_to_remote(&host, port, allow_local).await;
+    if remote_conn.is_none() {
+        dns::GLOBAL_DNS_CACHE.remove(&host);
+        remote_conn = connect_to_remote(&host, port, allow_local).await;
+    }
     let (mut remote_stream, remote_ip, confirm_cache) = match remote_conn {
         Some(remote) => (remote.stream, remote.ip, remote.confirm_cache),
         None => {
@@ -487,12 +491,8 @@ pub async fn handle_socks5_stream(
     }
 }
 
-/// Runs a dedicated standalone SOCKS5 listener (e.g. on port 1080).
-pub async fn run_socks5_listener(
-    addr: SocketAddr,
-    router: Arc<SmartRouter>,
-    metrics: Arc<ProxyMetrics>,
-) -> io::Result<()> {
+/// Binds a dedicated standalone SOCKS5 listener socket without starting the accept loop.
+pub fn bind_socks5_listener(addr: SocketAddr) -> io::Result<tokio::net::TcpListener> {
     let socket = match addr {
         SocketAddr::V4(_) => TcpSocket::new_v4()?,
         SocketAddr::V6(_) => TcpSocket::new_v6()?,
@@ -501,9 +501,18 @@ pub async fn run_socks5_listener(
     let _ = socket.set_recv_buffer_size(SOCKET_BUF_SIZE as u32);
     let _ = socket.set_send_buffer_size(SOCKET_BUF_SIZE as u32);
     socket.bind(addr)?;
-    let listener = socket.listen(1024)?;
+    socket.listen(1024)
+}
 
-    println!("[SOCKS5] Dedicated listener active on {}", addr);
+/// Runs the SOCKS5 accept loop on an already-bound listener.
+pub async fn run_socks5_accept_loop(
+    listener: tokio::net::TcpListener,
+    router: Arc<SmartRouter>,
+    metrics: Arc<ProxyMetrics>,
+) -> io::Result<()> {
+    if let Ok(addr) = listener.local_addr() {
+        println!("[SOCKS5] Dedicated listener active on {}", addr);
+    }
 
     loop {
         let (stream, _peer_addr) = match listener.accept().await {
@@ -520,6 +529,16 @@ pub async fn run_socks5_listener(
             let _ = handle_socks5_stream(stream, router_cloned, metrics_cloned).await;
         });
     }
+}
+
+/// Runs a dedicated standalone SOCKS5 listener (e.g. on port 1080).
+pub async fn run_socks5_listener(
+    addr: SocketAddr,
+    router: Arc<SmartRouter>,
+    metrics: Arc<ProxyMetrics>,
+) -> io::Result<()> {
+    let listener = bind_socks5_listener(addr)?;
+    run_socks5_accept_loop(listener, router, metrics).await
 }
 
 #[cfg(test)]
