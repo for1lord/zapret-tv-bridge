@@ -475,11 +475,8 @@ fn telegram_link_secret(raw: &str) -> String {
 }
 
 const TG_DC_ENDPOINTS: &[&str] = &[
-    "1:149.154.175.50",
-    "2:149.154.167.51",
-    "3:149.154.175.100",
-    "4:149.154.167.91",
-    "5:149.154.171.5",
+    "2:149.154.167.220",
+    "4:149.154.167.220",
 ];
 
 async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -670,6 +667,9 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
     };
     let prefer_python = engine == TgEngine::Python;
 
+    // Terminate any stale process from a prior run before checking the port
+    stop_recorded_tg_pid(&base_dir);
+
     let port_already_in_use = std::net::TcpListener::bind(tg_addr).is_err();
 
     let mut _tg_handle = if port_already_in_use {
@@ -681,8 +681,6 @@ async fn async_main(base_dir: PathBuf, is_daemon: bool) -> Result<(), Box<dyn st
         }
         tokio::spawn(async { Ok::<(), std::io::Error>(()) })
     } else if let Some(exe_path) = standalone_tg_exe.filter(|_| prefer_exe) {
-        stop_recorded_tg_pid(&base_dir);
-
         let mut cmd = std::process::Command::new(&exe_path);
         cmd.args([
             "--host",

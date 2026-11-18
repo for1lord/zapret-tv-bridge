@@ -2706,6 +2706,7 @@ def cmd_startup(enable, base_dir):
         "On Error Resume Next",
         'shell.Run "cmd.exe /c sc start zapret", 0, False',
         "' 2. Launch Bridge daemon",
+        'shell.Run "taskkill /F /T /IM tgwsproxy.exe", 0, True',
         'If fso.FileExists(curDir & "\\bin\\ZapretTVBridge.exe") Then',
         '    shell.Run """" & curDir & "\\bin\\ZapretTVBridge.exe"" --daemon", 0, False',
         'ElseIf fso.FileExists(curDir & "\\ZapretTVBridge.exe") Then',

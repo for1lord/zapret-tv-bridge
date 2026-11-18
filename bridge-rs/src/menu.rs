@@ -1471,6 +1471,7 @@ pub fn cmd_startup(enable: bool, base_dir: &Path) {
          Set objWMIService = GetObject(\"winmgmts:\\\\.\\root\\cimv2\")\r\n\
          Set colProcesses = objWMIService.ExecQuery(\"Select * from Win32_Process Where Name = 'ZapretTVBridge.exe'\")\r\n\
          If colProcesses.Count = 0 Then\r\n\
+             shell.Run \"taskkill /F /T /IM tgwsproxy.exe\", 0, True\r\n\
              If fso.FileExists(curDir & \"\\bin\\ZapretTVBridge.exe\") Then\r\n\
                  shell.Run \"\"\"\" & curDir & \"\\bin\\ZapretTVBridge.exe\"\" --daemon\", 0, False\r\n\
              ElseIf fso.FileExists(curDir & \"\\ZapretTVBridge.exe\") Then\r\n\
