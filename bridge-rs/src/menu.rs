@@ -654,7 +654,7 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
 
         println!();
         println!("  ==================================================");
-        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.15 (Rust Core)");
+        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.16 (Rust Core)");
         println!("  ==================================================");
         println!("  Служба Zapret:         {}", zapret_label);
         println!("  Шлюз для ТВ/Мобильных: {}", bridge_label);
