@@ -654,7 +654,7 @@ pub fn run_interactive_menu(base_dir: &PathBuf) {
 
         println!();
         println!("  ==================================================");
-        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.16 (Rust Core)");
+        println!("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.17 (Rust Core)");
         println!("  ==================================================");
         println!("  Служба Zapret:         {}", zapret_label);
         println!("  Шлюз для ТВ/Мобильных: {}", bridge_label);
@@ -1743,7 +1743,10 @@ pub fn enable_parallel_downloading_in_json(
 
             if let serde_json::Value::Array(ref mut exp_arr) = experiments_entry {
                 let initial_len = exp_arr.len();
-                exp_arr.retain(|x| x.as_str() != Some("enable-parallel-downloading@2"));
+                exp_arr.retain(|x| {
+                    x.as_str() != Some("enable-parallel-downloading@2")
+                        && x.as_str() != Some("enable-quic@1")
+                });
                 if exp_arr.len() != initial_len {
                     modified = true;
                 }
@@ -1755,6 +1758,11 @@ pub fn enable_parallel_downloading_in_json(
                     exp_arr.push(serde_json::Value::String(
                         "enable-parallel-downloading@1".to_string(),
                     ));
+                    modified = true;
+                }
+
+                if !exp_arr.iter().any(|x| x.as_str() == Some("enable-quic@2")) {
+                    exp_arr.push(serde_json::Value::String("enable-quic@2".to_string()));
                     modified = true;
                 }
             }
@@ -2080,8 +2088,9 @@ mod tests {
         let exp = parsed["browser"]["enabled_labs_experiments"]
             .as_array()
             .unwrap();
-        assert_eq!(exp.len(), 1);
-        assert_eq!(exp[0], "enable-parallel-downloading@1");
+        assert_eq!(exp.len(), 2);
+        assert!(exp.iter().any(|v| v == "enable-parallel-downloading@1"));
+        assert!(exp.iter().any(|v| v == "enable-quic@2"));
     }
 
     #[test]
@@ -2123,23 +2132,25 @@ mod tests {
 
     #[test]
     fn test_enable_parallel_downloading_already_present() {
-        let raw = r#"{"browser":{"enabled_labs_experiments":["enable-parallel-downloading@1"]}}"#;
+        let raw = r#"{"browser":{"enabled_labs_experiments":["enable-parallel-downloading@1","enable-quic@2"]}}"#;
         let (_updated, changed) = enable_parallel_downloading_in_json(raw).expect("should succeed");
         assert!(!changed);
     }
 
     #[test]
     fn test_enable_parallel_downloading_replaces_disabled() {
-        let raw = r#"{"browser":{"enabled_labs_experiments":["enable-parallel-downloading@2","other-flag@1"]}}"#;
+        let raw = r#"{"browser":{"enabled_labs_experiments":["enable-parallel-downloading@2","enable-quic@1","other-flag@1"]}}"#;
         let (updated, changed) = enable_parallel_downloading_in_json(raw).expect("should succeed");
         assert!(changed);
         let parsed: serde_json::Value = serde_json::from_str(&updated).unwrap();
         let exp = parsed["browser"]["enabled_labs_experiments"]
             .as_array()
             .unwrap();
-        assert_eq!(exp.len(), 2);
+        assert_eq!(exp.len(), 3);
         assert!(exp.iter().any(|v| v == "enable-parallel-downloading@1"));
         assert!(!exp.iter().any(|v| v == "enable-parallel-downloading@2"));
+        assert!(exp.iter().any(|v| v == "enable-quic@2"));
+        assert!(!exp.iter().any(|v| v == "enable-quic@1"));
         assert!(exp.iter().any(|v| v == "other-flag@1"));
     }
 }

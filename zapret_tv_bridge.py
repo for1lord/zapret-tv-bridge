@@ -29,6 +29,7 @@ import json
 import re
 import subprocess
 import argparse
+import shutil
 try:
     from wintun_gateway import WintunGatewayManager, SplitRouteManager
 except ImportError:
@@ -2294,6 +2295,13 @@ def enable_parallel_downloading_in_json(content: str) -> tuple[str, bool]:
         exp.append("enable-parallel-downloading@1")
         modified = True
 
+    if "enable-quic@1" in exp:
+        exp.remove("enable-quic@1")
+        modified = True
+    if "enable-quic@2" not in exp:
+        exp.append("enable-quic@2")
+        modified = True
+
     if modified:
         return json.dumps(data, ensure_ascii=False, separators=(',', ':')), True
     return content, False
@@ -2915,7 +2923,7 @@ def cmd_menu(base_dir):
 
         print()
         print("  ==================================================")
-        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.16")
+        print("  ZAPRET TV & MOBILE BRIDGE MANAGER v1.17")
         print("  ==================================================")
         print(f"  Служба Zapret:       {zapret_label}")
         print(f"  Шлюз для ТВ/Мобильных: {'[RUNNING - PID: ' + str(current_pid) + ']' if is_running else '[STOPPED]'}")
